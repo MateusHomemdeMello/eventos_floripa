@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#075c68">
+  <meta name="description" content="Agenda de eventos de Florianópolis no mapa e em lista.">
+  <title>Qual a Boa Floripa</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">Ir para os eventos</a>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="Qual a Boa Floripa — início">
+      <span class="brand-mark" aria-hidden="true">Q</span>
+      <span><strong>Qual a Boa</strong><small>Floripa</small></span>
+    </a>
+    <nav class="view-tabs" aria-label="Visualização">
+      <button class="view-tab active" data-view="map" type="button">Mapa</button>
+      <button class="view-tab" data-view="list" type="button">Agenda</button>
+    </nav>
+    <button class="icon-button mobile-filter" id="mobileFilter" type="button" aria-label="Abrir filtros">☰</button>
+  </header>
+
+  <main class="app-shell" id="content">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div>
+          <p class="eyebrow">Descubra Florianópolis</p>
+          <h1>O que está rolando?</h1>
+        </div>
+        <button class="close-sidebar" id="closeSidebar" type="button" aria-label="Fechar filtros">×</button>
+      </div>
+
+      <label class="search-field">
+        <span aria-hidden="true">⌕</span>
+        <input id="search" type="search" placeholder="Evento, local ou categoria" autocomplete="off">
+      </label>
+
+      <section class="filter-section" aria-labelledby="categoryTitle">
+        <div class="section-heading">
+          <h2 id="categoryTitle">Categorias</h2>
+          <button id="clearFilters" type="button">Limpar</button>
+        </div>
+        <div class="category-list" id="categories"></div>
+      </section>
+
+      <section class="filter-section" aria-labelledby="dateTitle">
+        <h2 id="dateTitle">Quando?</h2>
+        <div class="date-presets" id="datePresets">
+          <button class="preset active" data-preset="all" type="button">Todos</button>
+          <button class="preset" data-preset="today" type="button">Hoje</button>
+          <button class="preset" data-preset="weekend" type="button">Fim de semana</button>
+          <button class="preset" data-preset="7days" type="button">7 dias</button>
+        </div>
+        <div class="date-range">
+          <label>De<input id="dateFrom" type="date"></label>
+          <label>Até<input id="dateTo" type="date"></label>
+        </div>
+      </section>
+
+      <div class="sidebar-footer">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="lastUpdate">Aguardando atualização</span>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <div class="map-view active" id="mapView">
+        <div id="map" aria-label="Mapa de eventos de Florianópolis"></div>
+        <button class="locate-button" id="locate" type="button" title="Usar minha localização" aria-label="Usar minha localização">◎</button>
+        <div class="map-count" id="mapCount" aria-live="polite"></div>
+      </div>
+
+      <div class="agenda-view" id="listView">
+        <div class="agenda-head">
+          <div><p class="eyebrow">Agenda</p><h2>Próximos eventos</h2></div>
+          <span id="resultCount"></span>
+        </div>
+        <div class="event-grid" id="eventGrid"></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog class="event-dialog" id="eventDialog">
+    <button class="dialog-close" id="dialogClose" type="button" aria-label="Fechar">×</button>
+    <div id="dialogContent"></div>
+  </dialog>
+
+  <div class="scrim" id="scrim"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="dados.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

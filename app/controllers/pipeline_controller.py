@@ -58,6 +58,6 @@ class PipelineController:
             _, events, final = history.frames()
             publish('final', final)
             say('Banco atualizado. Exportando histórico e WebGIS com eventos vigentes...')
-            csv, xlsx, webgis = export_all(final, posts, extraction_failures, location_failures, self.root/'data/output', self.root/'assets/webgis_template.html')
+            csv, xlsx, webgis = export_all(final, posts, extraction_failures, location_failures, self.root/'data/output', self.root/'interface/webgis_template.html')
             say('Processamento concluído.')
             return PipelineResult(posts, events, final, extraction_failures, location_failures, csv, xlsx, webgis)

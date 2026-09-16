@@ -10,8 +10,8 @@ app/
   views/        # interface Streamlit
   controllers/  # orquestração do pipeline
   services/     # Apify, OpenAI, HERE e exportação
-assets/         # template HTML do WebGIS
 data/output/    # arquivos gerados localmente
+interface/      # site estático, dados exportados e template HTML do WebGIS
 streamlit_app.py
 requirements.txt
 ```
@@ -110,8 +110,16 @@ todas as datas, horários e categorias.
 2. `PipelineController` coleta posts pela Apify.
 3. `ai_service` interpreta legenda + imagens com OpenAI.
 4. `geocoding_service` valida/localiza eventos pela HERE e pode usar pesquisa web da OpenAI como fallback.
-5. `export_service` gera CSV, XLSX e o WebGIS HTML.
+5. `export_service` gera CSV, XLSX, o WebGIS HTML e atualiza `interface/dados.js`.
 6. Streamlit exibe progresso, tabela, erros, downloads e prévia do WebGIS.
+
+## Interface web estática
+
+A pasta `interface` contém uma aplicação web responsiva independente do Streamlit.
+Ela oferece mapa, agenda, busca, categorias, filtros de data e detalhes dos eventos.
+Ao concluir **Iniciar processamento**, o mesmo conjunto de eventos vigentes usado
+no WebGIS é gravado em `interface/dados.js`. Assim, basta publicar essa pasta em
+um serviço de hospedagem estática para disponibilizar a versão atualizada do site.
 
 ## Observação
 

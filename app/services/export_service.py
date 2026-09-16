@@ -81,6 +81,14 @@ def generate_webgis(df, template_path: Path, output_path: Path):
     output_path.write_text(render_webgis(df,template_path),encoding='utf-8')
     return len(events_for_webgis(df))
 
+def generate_interface_data(df, interface_dir: Path):
+    interface_dir.mkdir(parents=True,exist_ok=True)
+    updated=datetime.now(ZoneInfo('America/Sao_Paulo')).isoformat(timespec='minutes')
+    payload={"atualizado_em":updated,"eventos":events_for_webgis(df)}
+    data=json.dumps(payload,ensure_ascii=False,indent=2,allow_nan=False).replace("</","<\\/")
+    (interface_dir/'dados.js').write_text('window.QUAL_A_BOA_DATA = '+data+';\n',encoding='utf-8')
+    return len(payload['eventos'])
+
 def excel_safe(df):
     out=df.copy()
     for col in out.columns:
@@ -96,4 +104,5 @@ def export_all(final, posts, extraction_failures, location_failures, output_dir:
         if not ef.empty: ef.to_excel(writer,sheet_name='falhas_extracao',index=False)
         if not lf.empty: lf.to_excel(writer,sheet_name='falhas_localizacao',index=False)
     generate_webgis(final,template_path,webgis)
+    generate_interface_data(final,output_dir.parent.parent/'interface')
     return csv,xlsx,webgis
