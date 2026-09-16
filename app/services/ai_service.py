@@ -172,7 +172,7 @@ Em eventos híbridos, classifique pela atividade central anunciada, não apenas 
     response=client.responses.create(model=config.ai_model,input=[{"role":"user","content":content}],text={"format":EVENTOS_SCHEMA},max_output_tokens=4000,store=False)
     return json.loads(response.output_text).get("eventos",[]), "; ".join(errors)
 
-def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None):
+def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None, on_result=None):
     client=OpenAI(api_key=api_key); events=[]; failures=[]; total=max(len(posts),1)
     for n,(idx,post) in enumerate(posts.iterrows(),1):
         try:
@@ -180,7 +180,11 @@ def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None):
             for event in found:
                 event.update({"perfil":post.get("perfil"),"data_publicacao":post.get("data_publicacao"),"url_post":post.get("url_post"),"shortcode":post.get("shortcode"),"erros_imagem":img_errors or None})
                 events.append(event)
-        except Exception as exc: failures.append({"indice_post":idx,"url_post":post.get("url_post"),"erro":repr(exc)})
+            if on_result: on_result(idx,post,found,None)
+        except Exception as exc:
+            error=repr(exc)
+            failures.append({"indice_post":idx,"url_post":post.get("url_post"),"erro":error})
+            if on_result: on_result(idx,post,None,error)
         if progress: progress(n/total, f"Interpretando posts: {n}/{len(posts)}")
         time.sleep(config.ai_interval_seconds)
     cols=["evento","categoria","data_inicio","data_fim","horario_inicio","horario_fim","local_informado","endereco_informado","bairro_informado","referencia_local","descricao","confianca_extracao","observacoes","perfil","data_publicacao","url_post","shortcode","erros_imagem"]

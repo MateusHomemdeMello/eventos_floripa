@@ -6,10 +6,7 @@ from app.controllers.pipeline_controller import PipelineController
 from dataclasses import asdict
 from app.services.config_service import parse_settings, export_config
 from app.services.geocoding_service import validate_here_key, HereAuthenticationError
-from app.services.export_service import render_webgis, export_all, events_for_webgis
-from app.services.history_service import PostHistory
-from app.models.results import PipelineResult
-import pandas as pd
+from app.services.export_service import render_webgis, events_for_webgis
 
 
 def _import_config():
@@ -36,15 +33,12 @@ def render(root: Path):
     history_path=root/'data/banco_posts.csv'
     if 'history_loaded' not in st.session_state:
         try:
-            with PostHistory.transaction(history_path) as history:
-                history.migrate_export(root/'data/output/eventos_processados.csv')
-                if history.entries:
-                    saved_posts,saved_events,saved_final=history.frames()
-                    empty=pd.DataFrame()
-                    paths=export_all(saved_final,saved_posts,empty,empty,root/'data/output',root/'assets/webgis_template.html')
-                    st.session_state['result']=PipelineResult(saved_posts,saved_events,saved_final,empty,empty,*paths)
-                    st.session_state['downloads']={path.name:path.read_bytes() for path in paths}
-                    st.session_state['stages']={'posts':saved_posts,'events':saved_events,'final':saved_final}
+            controller=PipelineController(AppConfig(),Secrets('','',''),root)
+            saved_stages,saved_result=controller.restore_state()
+            st.session_state['stages']=saved_stages
+            if saved_result:
+                st.session_state['result']=saved_result
+                st.session_state['downloads']={path.name:path.read_bytes() for path in (saved_result.csv_path,saved_result.xlsx_path,saved_result.webgis_path)}
             st.session_state['history_loaded']=True
         except (RuntimeError,OSError) as exc:
             st.error(f'Não foi possível carregar o histórico: {exc}')
@@ -121,11 +115,19 @@ def render(root: Path):
                     st.session_state['result']=result; bar.progress(1.0); status.success("Processamento concluído.")
                 elif action=='collect': publish('posts',controller.collect_stage(status.info))
                 elif action=='extract':
-                    posts,events,_=controller.extraction_stage(status=status.info,progress=lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)))
+                    posts,events,failures=controller.extraction_stage(status=status.info,progress=lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)),on_saved=lambda frame:publish('events',frame))
                     publish('posts',posts); publish('events',events)
+                    result=controller.export_stage(posts,extraction_failures=failures,status=status.info)
+                    st.session_state['result']=result
+                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
+                    status.success('Extração salva e resultados atualizados.')
                 elif action=='locate':
-                    final,_=controller.location_stage(status.info,lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)))
+                    final,failures=controller.location_stage(status.info,lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)),lambda frame:publish('final',frame))
                     publish('final',final)
+                    result=controller.export_stage(location_failures=failures,status=status.info)
+                    st.session_state['result']=result
+                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
+                    status.success('Localizações salvas e publicações atualizadas.')
                 elif action=='export':
                     result=controller.export_stage(status=status.info)
                     st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}

@@ -116,8 +116,11 @@ todas as datas, horários e categorias.
 
 O processamento pode ser executado de ponta a ponta ou em quatro etapas
 independentes: **Coletar**, **Extrair**, **Localizar** e **Exportar**. A coleta é
-salva em `data/posts_coletados.json`; a extração e cada localização concluída
-são persistidas no banco imediatamente, permitindo retomar após interrupções.
+salva em `data/posts_coletados.json`; cada extração e localização concluída é
+persistida no banco imediatamente, permitindo retomar após interrupções. As
+falhas ficam em `data/falhas_extracao.json` e `data/falhas_localizacao.json`.
+Ao reabrir a ferramenta, todas as etapas salvas são restauradas. Extrair e
+Localizar também atualizam Resultados, WebGIS e o site automaticamente.
 
 Na aba **Resultados**, a coluna **Publicar** controla a presença do evento no
 WebGIS e no site estático. Desmarcar e salvar mantém o evento no histórico, CSV
