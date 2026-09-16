@@ -1,4 +1,4 @@
-from app.services.export_service import hhmm, date_iso
+from app.services.export_service import hhmm, date_iso, normalized_category
 from app.services.export_service import events_for_webgis
 import pandas as pd
 import pytest
@@ -22,3 +22,20 @@ def test_export_preserves_only_known_times(start,end,expected):
     frame=pd.DataFrame([{'data_inicio':'2026-09-13','latitude':-27.6,'longitude':-48.5,'horario_inicio':start,'horario_fim':end}])
     event=events_for_webgis(frame,date(2026,9,13))[0]
     assert (event['hora_inicio'],event['hora_fim'])==expected
+
+
+@pytest.mark.parametrize('old,new',[
+    ('feira','feiras'), ('esporte','esportes'), ('cinema','cinema_audiovisual'),
+])
+def test_legacy_categories_are_migrated(old,new):
+    assert normalized_category(old)==new
+
+
+@pytest.mark.parametrize('name,expected',[
+    ('Oficina de aquarela','cursos_oficinas'),
+    ('Exposição Ressonâncias','exposicoes'),
+    ('Festival literário','festivais'),
+    ('Espetáculo teatral','apresentacoes'),
+])
+def test_old_cultura_is_reclassified_by_event_focus(name,expected):
+    assert normalized_category('cultura',name)==expected

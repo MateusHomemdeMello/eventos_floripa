@@ -27,16 +27,39 @@ def finite(value):
     except (TypeError,ValueError): return None
     return n if math.isfinite(n) else None
 
+CATEGORIES = {
+    "exposicoes", "apresentacoes", "musica", "feiras", "esportes",
+    "gastronomia", "cinema_audiovisual", "cursos_oficinas", "festivais", "encontros",
+}
+
+def normalized_category(value, event_name="", description=""):
+    category=text_value(value).lower().strip().replace(" ", "_")
+    aliases={"feira":"feiras", "esporte":"esportes", "cinema":"cinema_audiovisual", "oficina":"cursos_oficinas"}
+    category=aliases.get(category,category)
+    if category in CATEGORIES: return category
+    # Registros antigos usavam a categoria ampla "cultura". Termos
+    # inequívocos permitem exibi-los de forma útil na nova taxonomia.
+    text=f"{text_value(event_name)} {text_value(description)}".lower()
+    rules=(
+        ("cursos_oficinas", ("oficina", "curso", "capacita", "workshop")),
+        ("cinema_audiovisual", ("cinema", "cineclube", "filme", "audiovisual", "curta-metragem")),
+        ("exposicoes", ("exposição", "exposicao", "mostra de arte", "instalação", "instalacao")),
+        ("apresentacoes", ("teatro", "teatral", "dança", "danca", "circo", "stand-up", "recital")),
+        ("festivais", ("festival",)),
+        ("encontros", ("palestra", "seminário", "seminario", "debate", "roda de conversa", "congresso", "encontro")),
+    )
+    return next((name for name,terms in rules if any(term in text for term in terms)), "encontros")
+
 def events_for_webgis(df, today=None):
     today = today or datetime.now(ZoneInfo('America/Sao_Paulo')).date()
-    out=[]; valid={"feira","musica","cultura","gastronomia","esporte"}
+    out=[]
     if df.empty or not {"latitude","longitude"}.issubset(df.columns): return out
     for _,r in df.iterrows():
         lat,lng=finite(r.get("latitude")),finite(r.get("longitude")); start=date_iso(r.get("data_inicio"))
         if lat is None or lng is None or not start or not(-90<=lat<=90) or not(-180<=lng<=180): continue
         end=date_iso(r.get('data_fim')) or start
         if end < start or end < today.isoformat(): continue
-        cat=text_value(r.get("categoria"),"cultura").lower(); cat=cat if cat in valid else "cultura"
+        cat=normalized_category(r.get("categoria"),r.get("evento"),r.get("descricao"))
         try: eid=int(r.get("id"))
         except Exception: eid=len(out)+1
         h1=hhmm(r.get("horario_inicio")); h2=hhmm(r.get("horario_fim"))
@@ -49,6 +72,8 @@ def render_webgis(df, template_path: Path):
     replacement=f"/* EVENTOS_INICIO — gerado pela aplicação */\nlet eventos = {events};\n/* EVENTOS_FIM */"
     result,count=pattern.subn(lambda _:replacement,template,count=1)
     if count!=1: raise RuntimeError("Bloco de eventos não encontrado no template WebGIS.")
+    updated=datetime.now(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y às %H:%M')
+    result=result.replace('<!-- ULTIMA_ATUALIZACAO -->','Última atualização: '+updated)
     return result
 
 

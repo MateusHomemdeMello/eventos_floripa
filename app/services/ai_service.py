@@ -17,11 +17,16 @@ EVENTOS_SCHEMA = {
                         "categoria": {
                             "type": "string",
                             "enum": [
-                                "feira",
+                                "exposicoes",
+                                "apresentacoes",
                                 "musica",
-                                "cultura",
+                                "feiras",
+                                "esportes",
                                 "gastronomia",
-                                "esporte"
+                                "cinema_audiovisual",
+                                "cursos_oficinas",
+                                "festivais",
+                                "encontros"
                             ]
                         },
 
@@ -147,6 +152,18 @@ def image_to_data_url(url: str, config) -> str:
 def interpret_post(client: OpenAI, post, config):
     published=pd.Timestamp(post["data_publicacao"])
     prompt=f"""Analise esta publicação do Instagram como uma agenda de eventos.\nData da publicação: {published.strftime('%Y-%m-%d')}\nPerfil: @{post.get('perfil') or ''}\nURL: {post.get('url_post') or ''}\nLEGENDA:\n{post.get('legenda') or ''}\n\nExtraia somente eventos concretos. Considere legenda e imagens. Um post pode conter zero, um ou vários eventos. Resolva datas relativas usando a data da publicação. Datas em YYYY-MM-DD e horários HH:MM. Use null quando não houver informação e não invente dados. Em local_informado registre somente o espaço; endereço e bairro somente se explicitamente informados. Descrição curta e factual."""
+    prompt += '''\nCATEGORIA: escolha exatamente uma categoria pelo foco principal do evento, usando estas definições:
+ - exposicoes: mostras de arte, fotografia, patrimônio, ciência, acervos, instalações e demais conteúdos expostos ao público.
+ - apresentacoes: performances ao vivo, como teatro, dança, circo, stand-up, recitais e intervenções artísticas.
+ - musica: shows, concertos, apresentações musicais, DJs, rodas de samba, festivais musicais de pequeno porte e eventos centrados em música.
+ - feiras: eventos organizados em estandes, barracas ou expositores, voltados à comercialização, divulgação ou apresentação de produtos, serviços e produções locais.
+ - esportes: competições, torneios, corridas, jogos, campeonatos e demais eventos cujo foco principal seja uma prática esportiva.
+ - gastronomia: eventos voltados à culinária, degustações, experiências gastronômicas, festivais de comida, bebidas e atividades relacionadas.
+ - cinema_audiovisual: sessões de cinema, mostras, exibições, lançamentos, cineclubes e eventos relacionados a produções audiovisuais.
+ - cursos_oficinas: atividades de aprendizado ou capacitação com caráter prático, técnico, artístico, profissional ou educativo.
+ - festivais: eventos de maior programação ou duração, normalmente compostos por diversas atrações, atividades ou apresentações sob um mesmo tema.
+ - encontros: palestras, seminários, debates, rodas de conversa, congressos e outros eventos voltados à troca de conhecimento, experiências ou discussão de temas.
+Em eventos híbridos, classifique pela atividade central anunciada, não apenas por uma atração secundária. Use festivais para programação ampla e diversa; festivais musicais pequenos permanecem em musica.'''
     prompt += '\nHORÁRIOS: preencha início e fim somente quando explicitamente informados no post ou nas imagens. Se faltar um deles, retorne null nesse campo. Nunca estime duração, copie o início para o fim ou use meia-noite/23:59 como substitutos. Não use horário da publicação, de abertura do estabelecimento ou de outro evento.'
     content=[{"type":"input_text","text":prompt}]; errors=[]
     for i,url in enumerate((post.get("imagens") or [])[:config.max_images_per_post],1):

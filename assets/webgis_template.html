@@ -121,6 +121,7 @@ h1,h2,h3,.display{font-family:Nunito,Arial,sans-serif;font-weight:800}
   gap:8px;
   pointer-events:none;
 }
+.brand .last-update{font-size:9px;opacity:.72;margin-top:0}
 .quick-actions>*{pointer-events:auto}
 .basemap-picker{
   display:flex;align-items:center;gap:8px;
@@ -418,6 +419,7 @@ h1,h2,h3,.display{font-family:Nunito,Arial,sans-serif;font-weight:800}
   <div class="brand">
     <strong>Qual a Boa Floripa</strong>
     <span id="brandSubtitle">Carregando eventos…</span>
+    <span class="last-update"><!-- ULTIMA_ATUALIZACAO --></span>
   </div>
   <div class="view-switch">
     <button class="view-btn active" id="btnViewMap" type="button">Mapa</button>
@@ -495,11 +497,16 @@ let eventos = [];
 /* EVENTOS_FIM */
 
 const categoriasInfo = {
-  feira:{nome:"Feira",icone:"🧺",cor:"#28745d"},
-  musica:{nome:"Música",icone:"♬",cor:"#a94b39"},
-  cultura:{nome:"Cultura",icone:"◉",cor:"#345c83"},
-  gastronomia:{nome:"Gastronomia",icone:"☕",cor:"#916022"},
-  esporte:{nome:"Esporte",icone:"⚡",cor:"#087780"}
+  exposicoes:{nome:"Exposições",icone:"▣",cor:"#6b5b95"},
+  apresentacoes:{nome:"Apresentações",icone:"★",cor:"#b64e34"},
+  musica:{nome:"Música",icone:"♪",cor:"#a23e62"},
+  feiras:{nome:"Feiras",icone:"▦",cor:"#28745d"},
+  esportes:{nome:"Esportes",icone:"⚡",cor:"#087780"},
+  gastronomia:{nome:"Gastronomia",icone:"●",cor:"#916022"},
+  cinema_audiovisual:{nome:"Cinema e Audiovisual",icone:"▶",cor:"#345c83"},
+  cursos_oficinas:{nome:"Cursos e Oficinas",icone:"✎",cor:"#7b6d36"},
+  festivais:{nome:"Festivais",icone:"✦",cor:"#9b4d73"},
+  encontros:{nome:"Encontros",icone:"◆",cor:"#3f6f68"}
 };
 
 /* =========================================================
