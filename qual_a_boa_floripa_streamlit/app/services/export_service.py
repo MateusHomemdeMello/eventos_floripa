@@ -1,6 +1,8 @@
 import json, math, re
 from pathlib import Path
 import pandas as pd
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 def text_value(value, default=""):
     if value is None or not pd.api.types.is_scalar(value): return default
@@ -17,34 +19,42 @@ def date_iso(value):
 
 def hhmm(value):
     text=text_value(value).lower()
-    m=re.search(r"\b([01]?\d|2[0-3])(?:\s*[:h]\s*([0-5]\d))?\b",text)
-    return "" if not m else f"{int(m.group(1)):02d}:{int(m.group(2) or 0):02d}"
+    m=re.fullmatch(r"([01]?\d|2[0-3])(?:\s*:\s*([0-5]\d)|\s*h\s*([0-5]\d)|\s*(?:h|horas?))?",text)
+    return "" if not m else f"{int(m.group(1)):02d}:{int(m.group(2) or m.group(3) or 0):02d}"
 
 def finite(value):
     try: n=float(value)
     except (TypeError,ValueError): return None
     return n if math.isfinite(n) else None
 
-def events_for_webgis(df):
+def events_for_webgis(df, today=None):
+    today = today or datetime.now(ZoneInfo('America/Sao_Paulo')).date()
     out=[]; valid={"feira","musica","cultura","gastronomia","esporte"}
     if df.empty or not {"latitude","longitude"}.issubset(df.columns): return out
     for _,r in df.iterrows():
         lat,lng=finite(r.get("latitude")),finite(r.get("longitude")); start=date_iso(r.get("data_inicio"))
         if lat is None or lng is None or not start or not(-90<=lat<=90) or not(-180<=lng<=180): continue
+        end=date_iso(r.get('data_fim')) or start
+        if end < start or end < today.isoformat(): continue
         cat=text_value(r.get("categoria"),"cultura").lower(); cat=cat if cat in valid else "cultura"
         try: eid=int(r.get("id"))
         except Exception: eid=len(out)+1
         h1=hhmm(r.get("horario_inicio")); h2=hhmm(r.get("horario_fim"))
-        out.append({"id":eid,"nome":text_value(r.get("evento"),"Evento sem nome"),"categoria":cat,"data_inicio":start,"data_fim":date_iso(r.get("data_fim")) or start,"hora_inicio":h1 or "00:00","hora_fim":h2 or h1 or "23:59","local":text_value(r.get("local_padronizado")) or text_value(r.get("local_informado")) or "Local não informado","descricao":text_value(r.get("descricao")),"lat":lat,"lng":lng,"instagram_url":text_value(r.get("url_post")),"foto":""})
+        out.append({"id":eid,"nome":text_value(r.get("evento"),"Evento sem nome"),"categoria":cat,"data_inicio":start,"data_fim":date_iso(r.get("data_fim")) or start,"hora_inicio":h1 or None,"hora_fim":h2 or None,"local":text_value(r.get("local_padronizado")) or text_value(r.get("local_informado")) or "Local não informado","descricao":text_value(r.get("descricao")),"lat":lat,"lng":lng,"instagram_url":text_value(r.get("url_post")),"foto":""})
     return out
 
-def generate_webgis(df, template_path: Path, output_path: Path):
+def render_webgis(df, template_path: Path):
     template=template_path.read_text(encoding="utf-8"); events=json.dumps(events_for_webgis(df),ensure_ascii=False,indent=2,allow_nan=False).replace("</","<\\/")
     pattern=re.compile(r"/\* EVENTOS_INICIO.*?\*/\s*let eventos = .*?;\s*/\* EVENTOS_FIM \*/",re.DOTALL)
     replacement=f"/* EVENTOS_INICIO — gerado pela aplicação */\nlet eventos = {events};\n/* EVENTOS_FIM */"
     result,count=pattern.subn(lambda _:replacement,template,count=1)
     if count!=1: raise RuntimeError("Bloco de eventos não encontrado no template WebGIS.")
-    output_path.write_text(result,encoding="utf-8"); return len(json.loads(events))
+    return result
+
+
+def generate_webgis(df, template_path: Path, output_path: Path):
+    output_path.write_text(render_webgis(df,template_path),encoding='utf-8')
+    return len(events_for_webgis(df))
 
 def excel_safe(df):
     out=df.copy()

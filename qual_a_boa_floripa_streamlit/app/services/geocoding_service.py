@@ -7,6 +7,30 @@ from openai import OpenAI
 HERE_DISCOVER_URL="https://discover.search.hereapi.com/v1/discover"
 HERE_GEOCODE_URL="https://geocode.search.hereapi.com/v1/geocode"
 
+class HereAuthenticationError(RuntimeError):
+    pass
+
+
+def request_here(url, parameters, key, timeout=30):
+    try:
+        response = requests.get(url, params={**parameters, 'apiKey': key.strip()}, timeout=timeout)
+        if response.status_code in (401, 403):
+            raise HereAuthenticationError(
+                f'HERE: acesso recusado (HTTP {response.status_code}). Confira a API key, '
+                'o acesso a Geocoding & Search e as restrições de Trusted Domains no portal HERE.'
+            )
+        if not response.ok:
+            raise RuntimeError(f'HERE: falha HTTP {response.status_code}.')
+        return response.json().get('items', [])
+    except requests.RequestException:
+        raise RuntimeError('Não foi possível conectar à HERE. Confira a conexão e tente novamente.') from None
+
+
+def validate_here_key(key, config):
+    if not key.strip():
+        raise HereAuthenticationError('Informe a API key da HERE.')
+    request_here(HERE_DISCOVER_URL, {'at': f'{config.reference_lat},{config.reference_lon}', 'q': config.reference_city, 'limit': 1}, key, config.here_timeout)
+
 def configure(api_key, openai_key, config):
     global HERE_API_KEY, openai_client, MODELO_IA, CIDADE_REFERENCIA, ESTADO_REFERENCIA, PAIS_REFERENCIA, CODIGO_PAIS, CENTRO_REFERENCIA, RAIO_MAXIMO_KM, HERE_LIMITE_CANDIDATOS, HERE_IDIOMA, HERE_TIMEOUT, CONFIANCA_MINIMA_LOCALIZACAO, DIFERENCA_MINIMA_CANDIDATOS, USAR_BUSCA_WEB_FALLBACK
     HERE_API_KEY=api_key; openai_client=OpenAI(api_key=openai_key); MODELO_IA=config.ai_model
@@ -314,18 +338,7 @@ def requisicao_here(
         "limit": HERE_LIMITE_CANDIDATOS
     })
 
-    resposta = requests.get(
-        url,
-        params=parametros,
-        timeout=HERE_TIMEOUT
-    )
-
-    resposta.raise_for_status()
-
-    return resposta.json().get(
-        "items",
-        []
-    )
+    return request_here(url, parametros, HERE_API_KEY, HERE_TIMEOUT)
 
 
 def pesquisar_here_discover(
@@ -1048,6 +1061,9 @@ def geocode_events(events: pd.DataFrame, here_key: str, openai_key: str, config,
         try:
             result=localizar_evento(event)
             if result: result["_source_index"]=idx; located.append(result)
+            else: failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":"Localização sem resultado; nova tentativa pendente."})
+        except HereAuthenticationError:
+            raise
         except Exception as exc: failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":repr(exc)})
         if progress: progress(n/total, f"Geocodificando eventos: {n}/{len(events)}")
     geo=pd.DataFrame(located)
