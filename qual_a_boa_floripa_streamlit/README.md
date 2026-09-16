@@ -28,8 +28,8 @@ No desenvolvimento local, copie `.streamlit/secrets.toml.example` para `.streaml
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run streamlit_app.py
+python -m pip install -r requirements.txt
+python -m streamlit run streamlit_app.py
 ```
 
 ## Publicar no GitHub + Streamlit Community Cloud
