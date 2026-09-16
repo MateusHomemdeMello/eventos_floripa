@@ -11,7 +11,8 @@ app/
   controllers/  # orquestração do pipeline
   services/     # Apify, OpenAI, HERE e exportação
 data/output/    # arquivos gerados localmente
-interface/      # site estático, dados exportados e template HTML do WebGIS
+assets/         # template HTML do WebGIS
+interface/      # site estático e dados exportados
 streamlit_app.py
 requirements.txt
 ```

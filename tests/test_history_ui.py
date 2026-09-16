@@ -5,8 +5,8 @@ from app.services.history_service import PostHistory
 
 
 def test_startup_restores_history_without_external_apis(tmp_path):
-    (tmp_path/'interface').mkdir()
-    (tmp_path/'interface/webgis_template.html').write_text('/* EVENTOS_INICIO */ let eventos = []; /* EVENTOS_FIM */',encoding='utf-8')
+    (tmp_path/'assets').mkdir()
+    (tmp_path/'assets/webgis_template.html').write_text('/* EVENTOS_INICIO */ let eventos = []; /* EVENTOS_FIM */',encoding='utf-8')
     history=PostHistory(tmp_path/'data/banco_posts.csv')
     event={'evento':'Saved event','url_post':'https://www.instagram.com/p/A/','data_inicio':'2099-01-01'}
     history.add_extraction('A',{'url_post':event['url_post']},[event])

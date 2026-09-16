@@ -24,8 +24,8 @@ def geocode(frame, *args):
 
 @pytest.fixture
 def controller(tmp_path):
-    (tmp_path/'interface').mkdir()
-    (tmp_path/'interface/webgis_template.html').write_text('/* EVENTOS_INICIO */ let eventos = []; /* EVENTOS_FIM */',encoding='utf-8')
+    (tmp_path/'assets').mkdir()
+    (tmp_path/'assets/webgis_template.html').write_text('/* EVENTOS_INICIO */ let eventos = []; /* EVENTOS_FIM */',encoding='utf-8')
     return PipelineController(AppConfig(),Secrets('a','b','c'),tmp_path)
 
 

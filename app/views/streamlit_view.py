@@ -41,7 +41,7 @@ def render(root: Path):
                 if history.entries:
                     saved_posts,saved_events,saved_final=history.frames()
                     empty=pd.DataFrame()
-                    paths=export_all(saved_final,saved_posts,empty,empty,root/'data/output',root/'interface/webgis_template.html')
+                    paths=export_all(saved_final,saved_posts,empty,empty,root/'data/output',root/'assets/webgis_template.html')
                     st.session_state['result']=PipelineResult(saved_posts,saved_events,saved_final,empty,empty,*paths)
                     st.session_state['downloads']={path.name:path.read_bytes() for path in paths}
                     st.session_state['stages']={'posts':saved_posts,'events':saved_events,'final':saved_final}
@@ -116,7 +116,7 @@ def render(root: Path):
     if result and 'downloads' not in st.session_state:
         st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
     if result:
-        st.session_state['downloads'][result.webgis_path.name]=render_webgis(result.final,root/'interface/webgis_template.html').encode('utf-8')
+        st.session_state['downloads'][result.webgis_path.name]=render_webgis(result.final,root/'assets/webgis_template.html').encode('utf-8')
     with tab2:
         if history_path.exists():
             st.download_button('Baixar banco de posts CSV',history_path.read_bytes(),file_name=history_path.name,mime='text/csv')
