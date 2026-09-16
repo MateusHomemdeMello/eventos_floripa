@@ -84,7 +84,13 @@ def render(root: Path):
     with tab1:
         st.caption('O banco local é consultado após a coleta. Posts já analisados reutilizam os resultados; somente etapas pendentes são executadas.')
         st.info("As chaves são usadas nesta sessão e incluídas no JSON quando você exporta as configurações.")
-        start=st.button("Iniciar processamento",type="primary",use_container_width=True)
+        start=st.button("Executar processamento completo",type="primary",use_container_width=True)
+        st.caption('Ou execute uma etapa por vez. Cada etapa reaproveita o resultado persistido da anterior.')
+        step_cols=st.columns(4)
+        collect_only=step_cols[0].button('1. Coletar',use_container_width=True)
+        extract_only=step_cols[1].button('2. Extrair',use_container_width=True)
+        locate_only=step_cols[2].button('3. Localizar',use_container_width=True)
+        export_only=step_cols[3].button('4. Exportar',use_container_width=True)
         status=st.empty()
         bar=st.progress(0.0)
         stages=st.session_state.setdefault('stages', {})
@@ -97,12 +103,15 @@ def render(root: Path):
         def publish(name, frame):
             stages[name]=frame
             slots[name].dataframe(frame,use_container_width=True)
-        if start:
-            if not all([openai,apify,here]): st.error("Informe as três credenciais.")
-            elif not config.profiles: st.error("Informe pelo menos um perfil.")
+        action=next((name for name,pressed in [('full',start),('collect',collect_only),('extract',extract_only),('locate',locate_only),('export',export_only)] if pressed),None)
+        if action:
+            missing=(action=='full' and not all([openai,apify,here])) or (action=='collect' and not apify) or (action=='extract' and not openai) or (action=='locate' and not all([here,openai]))
+            if missing: st.error('Informe as credenciais necessárias para esta etapa.')
+            elif action in {'full','collect'} and not config.profiles: st.error("Informe pelo menos um perfil.")
             else:
-                controller=PipelineController(config,Secrets(openai,apify,here),root)
-                try:
+              controller=PipelineController(config,Secrets(openai,apify,here),root)
+              try:
+                if action=='full':
                     st.session_state.pop('result', None)
                     st.session_state.pop('downloads', None)
                     stages.clear()
@@ -110,8 +119,19 @@ def render(root: Path):
                     result=controller.run(status=status.info,progress=lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)),on_stage=publish)
                     st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
                     st.session_state['result']=result; bar.progress(1.0); status.success("Processamento concluído.")
-                except HereAuthenticationError as exc: status.error(str(exc))
-                except Exception as exc: status.error(f"Falha: {exc}"); st.exception(exc)
+                elif action=='collect': publish('posts',controller.collect_stage(status.info))
+                elif action=='extract':
+                    posts,events,_=controller.extraction_stage(status=status.info,progress=lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)))
+                    publish('posts',posts); publish('events',events)
+                elif action=='locate':
+                    final,_=controller.location_stage(status.info,lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)))
+                    publish('final',final)
+                elif action=='export':
+                    result=controller.export_stage(status=status.info)
+                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
+                    st.session_state['result']=result; status.success('Exportação concluída.')
+              except HereAuthenticationError as exc: status.error(str(exc))
+              except Exception as exc: status.error(f"Falha: {exc}"); st.exception(exc)
     result=st.session_state.get('result')
     if result and 'downloads' not in st.session_state:
         st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
@@ -123,8 +143,19 @@ def render(root: Path):
         if not result: st.warning("Execute o processamento primeiro.")
         else:
             c1,c2,c3=st.columns(3); c1.metric("Posts",len(result.posts)); c2.metric("Eventos",len(result.events)); c3.metric("Revisões",int(result.final.get('necessita_revisao',False).fillna(False).sum()) if 'necessita_revisao' in result.final else 0)
-            st.caption('Histórico acumulado: inclui eventos encerrados e localidades pendentes. O WebGIS filtra os eventos encerrados.')
-            st.dataframe(result.final,use_container_width=True,height=440)
+            st.caption('Desmarque “Publicar” para manter um evento no histórico sem exibi-lo no WebGIS ou no site.')
+            publication_columns=['publicar_webgis','evento','categoria','data_inicio','local_padronizado','local_informado','_post_id','_event_index']
+            publication_columns=[name for name in publication_columns if name in result.final.columns]
+            publication=st.data_editor(result.final[publication_columns],use_container_width=True,height=440,hide_index=True,
+                disabled=[name for name in publication_columns if name!='publicar_webgis'],
+                column_config={'publicar_webgis':st.column_config.CheckboxColumn('Publicar',default=True)})
+            if st.button('Salvar seleção de publicação',type='primary'):
+                controller=PipelineController(config,Secrets(openai,apify,here),root)
+                changes=[(row['_post_id'],row['_event_index'],row['publicar_webgis']) for _,row in publication.iterrows()]
+                result=controller.set_publication(changes)
+                st.session_state['result']=result
+                st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
+                st.success('Seleção salva e publicações atualizadas.')
             for label,path,mime in [("Baixar CSV",result.csv_path,"text/csv"),("Baixar Excel",result.xlsx_path,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),("Baixar WebGIS",result.webgis_path,"text/html")]:
                 st.download_button(label,st.session_state['downloads'][path.name],file_name=path.name,mime=mime)
             if not result.extraction_failures.empty:

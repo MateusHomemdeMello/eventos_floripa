@@ -39,3 +39,11 @@ def test_legacy_categories_are_migrated(old,new):
 ])
 def test_old_cultura_is_reclassified_by_event_focus(name,expected):
     assert normalized_category('cultura',name)==expected
+
+
+def test_event_disabled_for_publication_is_not_exported():
+    frame=pd.DataFrame([
+        {'evento':'Publicado','publicar_webgis':True,'data_inicio':'2099-01-01','latitude':-27.6,'longitude':-48.5},
+        {'evento':'Oculto','publicar_webgis':False,'data_inicio':'2099-01-01','latitude':-27.6,'longitude':-48.5},
+    ])
+    assert [event['nome'] for event in events_for_webgis(frame,date(2099,1,1))]==['Publicado']

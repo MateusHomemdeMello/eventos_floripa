@@ -80,6 +80,17 @@ class PostHistory:
     def add_extraction(self, key, post, events):
         self.entries[key] = {'post': post, 'events': events, 'final': {}, 'updated_at': datetime.now(timezone.utc).isoformat()}
 
+    def set_publication(self, post_id, event_index, publish):
+        entry=self.entries.get(str(post_id))
+        index=str(event_index)
+        if entry is None or not index.isdigit() or int(index) >= len(entry['events']):
+            raise KeyError('Evento não encontrado no banco.')
+        value=bool(publish)
+        entry['events'][int(index)]['publicar_webgis']=value
+        if index in entry['final']:
+            entry['final'][index]['publicar_webgis']=value
+        entry['updated_at']=datetime.now(timezone.utc).isoformat()
+
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
@@ -101,11 +112,15 @@ class PostHistory:
 
     def frames(self):
         posts, events, final = [], [], []
-        for entry in self.entries.values():
+        for key,entry in self.entries.items():
             posts.append(entry['post'])
-            events.extend(entry['events'])
+            for index,event in enumerate(entry['events']):
+                events.append(event)
             for index, event in enumerate(entry['events']):
                 row = dict(entry['final'].get(str(index), event))
+                row['publicar_webgis']=bool(row.get('publicar_webgis',event.get('publicar_webgis',True)))
+                row['_post_id']=key
+                row['_event_index']=index
                 if str(index) not in entry['final']:
                     row.update(necessita_revisao=True, motivo_revisao='Localização pendente')
                 final.append(row)

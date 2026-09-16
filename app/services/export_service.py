@@ -55,6 +55,10 @@ def events_for_webgis(df, today=None):
     out=[]
     if df.empty or not {"latitude","longitude"}.issubset(df.columns): return out
     for _,r in df.iterrows():
+        publish=r.get("publicar_webgis",True)
+        if isinstance(publish,str):
+            if publish.strip().lower() in {"false","0","não","nao"}: continue
+        elif not pd.isna(publish) and not bool(publish): continue
         lat,lng=finite(r.get("latitude")),finite(r.get("longitude")); start=date_iso(r.get("data_inicio"))
         if lat is None or lng is None or not start or not(-90<=lat<=90) or not(-180<=lng<=180): continue
         end=date_iso(r.get('data_fim')) or start
@@ -98,6 +102,7 @@ def excel_safe(df):
 def export_all(final, posts, extraction_failures, location_failures, output_dir: Path, template_path: Path):
     output_dir.mkdir(parents=True,exist_ok=True); csv=output_dir/'eventos_processados.csv'; xlsx=output_dir/'eventos_processados.xlsx'; webgis=output_dir/'qual_a_boa_floripa.html'
     f,p,ef,lf=map(excel_safe,[final,posts,extraction_failures,location_failures])
+    f=f.drop(columns=[name for name in f.columns if str(name).startswith('_')])
     f.to_csv(csv,index=False,encoding='utf-8-sig')
     with pd.ExcelWriter(xlsx,engine='openpyxl') as writer:
         f.to_excel(writer,sheet_name='eventos',index=False); p.to_excel(writer,sheet_name='posts_coletados',index=False)

@@ -1055,16 +1055,23 @@ def localizar_evento(
             "fonte_web"
         )
 
-def geocode_events(events: pd.DataFrame, here_key: str, openai_key: str, config, progress=None):
+def geocode_events(events: pd.DataFrame, here_key: str, openai_key: str, config, progress=None, on_result=None):
     configure(here_key,openai_key,config); located=[]; failures=[]; total=max(len(events),1)
     for n,(idx,event) in enumerate(events.iterrows(),1):
         try:
             result=localizar_evento(event)
-            if result: result["_source_index"]=idx; located.append(result)
-            else: failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":"Localização sem resultado; nova tentativa pendente."})
+            if result:
+                result["_source_index"]=idx; located.append(result)
+                if on_result: on_result(idx,result,None)
+            else:
+                error="Localização sem resultado; nova tentativa pendente."
+                failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":error})
+                if on_result: on_result(idx,None,error)
         except HereAuthenticationError:
             raise
-        except Exception as exc: failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":repr(exc)})
+        except Exception as exc:
+            failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":repr(exc)})
+            if on_result: on_result(idx,None,repr(exc))
         if progress: progress(n/total, f"Geocodificando eventos: {n}/{len(events)}")
     geo=pd.DataFrame(located)
     base=events.assign(id=range(1,len(events)+1)).copy()

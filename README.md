@@ -114,6 +114,15 @@ todas as datas, horários e categorias.
 5. `export_service` gera CSV, XLSX, o WebGIS HTML e atualiza `interface/dados.js`.
 6. Streamlit exibe progresso, tabela, erros, downloads e prévia do WebGIS.
 
+O processamento pode ser executado de ponta a ponta ou em quatro etapas
+independentes: **Coletar**, **Extrair**, **Localizar** e **Exportar**. A coleta é
+salva em `data/posts_coletados.json`; a extração e cada localização concluída
+são persistidas no banco imediatamente, permitindo retomar após interrupções.
+
+Na aba **Resultados**, a coluna **Publicar** controla a presença do evento no
+WebGIS e no site estático. Desmarcar e salvar mantém o evento no histórico, CSV
+e Excel, mas o omite das duas interfaces públicas.
+
 ## Interface web estática
 
 A pasta `interface` contém uma aplicação web responsiva independente do Streamlit.
