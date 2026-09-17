@@ -630,7 +630,7 @@ function popupContent(ev){
 }
 
 const markers={};
-const markerCluster=L.markerClusterGroup({showCoverageOnHover:false,spiderfyOnMaxZoom:true,disableClusteringAtZoom:17});
+const markerCluster=L.markerClusterGroup({showCoverageOnHover:false,spiderfyOnMaxZoom:true,disableClusteringAtZoom:17,maxClusterRadius:27});
 map.addLayer(markerCluster);
 function renderMarkers(){
   markerCluster.clearLayers();

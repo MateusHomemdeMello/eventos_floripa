@@ -1,5 +1,5 @@
 window.QUAL_A_BOA_DATA = {
-  "atualizado_em": "2026-09-16T21:17-03:00",
+  "atualizado_em": "2026-09-16T21:21-03:00",
   "eventos": [
     {
       "id": 19,

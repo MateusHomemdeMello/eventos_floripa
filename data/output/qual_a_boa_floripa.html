@@ -426,7 +426,7 @@ h1,h2,h3,.display{font-family:Nunito,Arial,sans-serif;font-weight:800}
   <div class="brand">
     <strong>Qual a Boa Floripa</strong>
     <span id="brandSubtitle">Carregando eventos…</span>
-    <span class="last-update">Última atualização: 16/09/2026 às 21:17</span>
+    <span class="last-update">Última atualização: 16/09/2026 às 21:21</span>
   </div>
   <div class="view-switch">
     <button class="view-btn active" id="btnViewMap" type="button">Mapa</button>
@@ -1039,7 +1039,7 @@ function popupContent(ev){
 }
 
 const markers={};
-const markerCluster=L.markerClusterGroup({showCoverageOnHover:false,spiderfyOnMaxZoom:true,disableClusteringAtZoom:17});
+const markerCluster=L.markerClusterGroup({showCoverageOnHover:false,spiderfyOnMaxZoom:true,disableClusteringAtZoom:17,maxClusterRadius:27});
 map.addLayer(markerCluster);
 function renderMarkers(){
   markerCluster.clearLayers();
