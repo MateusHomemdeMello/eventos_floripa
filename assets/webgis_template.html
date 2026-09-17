@@ -618,17 +618,6 @@ function formatDataHora(ev){
   return `${intervalo} • ${formatHorario(ev)}`;
 }
 
-function popupContent(ev){
-  return `<div style="min-width:200px;max-width:250px">
-    ${ev.foto?`<img class="popup-photo" src="${ev.foto}" alt="Foto da publicação de ${ev.nome}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`:""}
-    <b style="font-size:14px">${ev.nome}</b>
-    <div style="font-size:11.5px;color:var(--coral-dark);font-weight:700;margin-top:4px">${formatDataHora(ev)}</div>
-    <div style="font-size:12px;color:#5d7278;margin-top:5px">${ev.descricao}</div>
-    <div style="font-size:11px;color:#5d7278;margin-top:6px"><b>Local:</b> ${ev.local}${ev.bairro?` · ${ev.bairro}`:""}</div>
-    ${ev.endereco?`<div style="font-size:11px;color:#5d7278;margin-top:3px"><b>Endereço:</b> ${ev.endereco}</div>`:""}
-  </div>`;
-}
-
 const markers={};
 const markerCluster=L.markerClusterGroup({showCoverageOnHover:false,spiderfyOnMaxZoom:true,disableClusteringAtZoom:17,maxClusterRadius:27});
 map.addLayer(markerCluster);
@@ -638,7 +627,6 @@ function renderMarkers(){
   filteredEvents().forEach(ev=>{
     const m=L.marker([ev.lat,ev.lng],{icon:markerIcon(ev),title:ev.nome});
     m.eventData=ev;
-    m.bindPopup(popupContent(ev));
     m.on("click",()=>selectEvent(ev,m));
     markerCluster.addLayer(m);
     markers[ev.id]=m;
@@ -721,7 +709,7 @@ function bindEventRows(){
     el.addEventListener("click",()=>{
       const ev=eventos.find(e=>e.id===Number(el.dataset.id));
       const marker=markers[ev.id];
-      if(ev&&marker){map.setView(marker.getLatLng(),17);marker.openPopup();selectEvent(ev,marker);}
+      if(ev&&marker){map.setView(marker.getLatLng(),17);selectEvent(ev,marker);}
     });
   });
 }
@@ -773,7 +761,6 @@ function renderCalendar(){
       const marker=markers[ev.id];
       if(marker){
         map.setView(marker.getLatLng(),15);
-        marker.openPopup();
         selectEvent(ev,marker);
       }
     });
@@ -815,7 +802,6 @@ search.addEventListener("input",()=>{
       switchView("map");
       const marker=markers[ev.id];
       map.setView(marker.getLatLng(),15);
-      marker.openPopup();
       selectEvent(ev,marker);
     });
     results.appendChild(b);
@@ -866,7 +852,7 @@ document.getElementById("sheetHandle").addEventListener("click",()=>{
   else collapseSheet();
 });
 document.getElementById('sheetClose').addEventListener('click',()=>{
-  collapseSheet();map.closePopup();renderList();
+  collapseSheet();renderList();
   document.getElementById('sheetHandle').focus();
 });
 
@@ -874,7 +860,7 @@ document.getElementById('sheetClose').addEventListener('click',()=>{
 const filterDialog=document.getElementById('filterDialog');
 const filterInputs={dateFrom:'filterDateFrom',dateTo:'filterDateTo',timeFrom:'filterTimeFrom',timeTo:'filterTimeTo'};
 function refreshFilters(){
-  map.closePopup();collapseSheet();
+  collapseSheet();
   document.getElementById('searchResults').classList.remove('open');
   document.querySelectorAll('.chip').forEach(chip=>{
     const selected=chip.dataset.filter===activeFilter;
