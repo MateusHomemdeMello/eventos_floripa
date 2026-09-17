@@ -112,12 +112,14 @@
     if (!event) return;
     const item=category(event.categoria);
     const directions=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${event.lat},${event.lng}`)}`;
-    el('dialogContent').innerHTML=`<div class="dialog-hero" style="--category:${item.color}"></div><div class="dialog-body">
+    el('dialogContent').innerHTML=`<div class="dialog-hero" style="--category:${item.color}"></div>${event.foto?`<img class="dialog-photo" src="${html(event.foto)}" alt="Foto da publicação de ${html(event.nome)}" loading="lazy" referrerpolicy="no-referrer">`:''}<div class="dialog-body">
       <div class="card-category" style="--category:${item.color}"><i></i>${item.name}</div>
       <h2>${html(event.nome)}</h2><p class="dialog-description">${html(event.descricao || 'Sem descrição disponível.')}</p>
       <div class="dialog-meta"><span><b>Data:</b> ${html(formatDate(event))}</span><span><b>Local:</b> ${html(event.local || 'A confirmar')}</span></div>
       <div class="dialog-actions"><a href="${directions}" target="_blank" rel="noopener">Como chegar</a>${event.instagram_url?`<a class="secondary" href="${html(event.instagram_url)}" target="_blank" rel="noopener">Ver publicação</a>`:''}</div>
     </div>`;
+    const photo=el('dialogContent').querySelector('.dialog-photo');
+    if(photo)photo.addEventListener('error',()=>photo.remove(),{once:true});
     el('eventDialog').showModal();
   }
 

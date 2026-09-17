@@ -47,3 +47,14 @@ def test_event_disabled_for_publication_is_not_exported():
         {'evento':'Oculto','publicar_webgis':False,'data_inicio':'2099-01-01','latitude':-27.6,'longitude':-48.5},
     ])
     assert [event['nome'] for event in events_for_webgis(frame,date(2099,1,1))]==['Publicado']
+
+
+def test_remote_photo_url_is_exported_without_embedding_the_file():
+    photo='https://example.com/post-photo.jpg'
+    frame=pd.DataFrame([{
+        'evento':'Evento com foto','data_inicio':'2099-01-01',
+        'latitude':-27.6,'longitude':-48.5,'foto_url':photo,
+    }])
+    event=events_for_webgis(frame,date(2099,1,1))[0]
+    assert event['foto']==photo
+    assert not event['foto'].startswith('data:')

@@ -114,10 +114,13 @@ class PostHistory:
         posts, events, final = [], [], []
         for key,entry in self.entries.items():
             posts.append(entry['post'])
+            images=entry['post'].get('imagens') or []
+            post_photo=images[0] if isinstance(images,list) and images and isinstance(images[0],str) else None
             for index,event in enumerate(entry['events']):
                 events.append(event)
             for index, event in enumerate(entry['events']):
                 row = dict(entry['final'].get(str(index), event))
+                row['foto_url']=row.get('foto_url') or event.get('foto_url') or post_photo
                 row['publicar_webgis']=bool(row.get('publicar_webgis',event.get('publicar_webgis',True)))
                 row['_post_id']=key
                 row['_event_index']=index
@@ -154,7 +157,7 @@ class PostHistory:
             extraction_fields = ['evento','categoria','data_inicio','data_fim','horario_inicio','horario_fim',
                                  'local_informado','endereco_informado','bairro_informado','referencia_local',
                                  'descricao','confianca_extracao','observacoes','perfil','data_publicacao',
-                                 'url_post','shortcode','erros_imagem']
+                                 'url_post','shortcode','foto_url','erros_imagem']
             entry['events'].append({name: row.get(name) for name in extraction_fields})
             if pd.notna(row.get('latitude')) and pd.notna(row.get('longitude')):
                 entry['final'][index] = row

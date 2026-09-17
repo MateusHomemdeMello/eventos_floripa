@@ -177,8 +177,10 @@ def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None, on_
     for n,(idx,post) in enumerate(posts.iterrows(),1):
         try:
             found,img_errors=interpret_post(client,post,config)
+            images=post.get("imagens") or []
+            photo_url=images[0] if isinstance(images,list) and images else None
             for event in found:
-                event.update({"perfil":post.get("perfil"),"data_publicacao":post.get("data_publicacao"),"url_post":post.get("url_post"),"shortcode":post.get("shortcode"),"erros_imagem":img_errors or None})
+                event.update({"perfil":post.get("perfil"),"data_publicacao":post.get("data_publicacao"),"url_post":post.get("url_post"),"shortcode":post.get("shortcode"),"foto_url":photo_url,"erros_imagem":img_errors or None})
                 events.append(event)
             if on_result: on_result(idx,post,found,None)
         except Exception as exc:
@@ -187,5 +189,5 @@ def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None, on_
             if on_result: on_result(idx,post,None,error)
         if progress: progress(n/total, f"Interpretando posts: {n}/{len(posts)}")
         time.sleep(config.ai_interval_seconds)
-    cols=["evento","categoria","data_inicio","data_fim","horario_inicio","horario_fim","local_informado","endereco_informado","bairro_informado","referencia_local","descricao","confianca_extracao","observacoes","perfil","data_publicacao","url_post","shortcode","erros_imagem"]
+    cols=["evento","categoria","data_inicio","data_fim","horario_inicio","horario_fim","local_informado","endereco_informado","bairro_informado","referencia_local","descricao","confianca_extracao","observacoes","perfil","data_publicacao","url_post","shortcode","foto_url","erros_imagem"]
     return pd.DataFrame(events,columns=cols), pd.DataFrame(failures)

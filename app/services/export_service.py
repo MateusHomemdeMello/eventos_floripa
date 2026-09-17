@@ -67,7 +67,7 @@ def events_for_webgis(df, today=None):
         try: eid=int(r.get("id"))
         except Exception: eid=len(out)+1
         h1=hhmm(r.get("horario_inicio")); h2=hhmm(r.get("horario_fim"))
-        out.append({"id":eid,"nome":text_value(r.get("evento"),"Evento sem nome"),"categoria":cat,"data_inicio":start,"data_fim":date_iso(r.get("data_fim")) or start,"hora_inicio":h1 or None,"hora_fim":h2 or None,"local":text_value(r.get("local_padronizado")) or text_value(r.get("local_informado")) or "Local não informado","endereco":text_value(r.get("endereco")) or text_value(r.get("endereco_informado")),"bairro":text_value(r.get("bairro")) or text_value(r.get("bairro_informado")),"descricao":text_value(r.get("descricao")),"lat":lat,"lng":lng,"instagram_url":text_value(r.get("url_post")),"foto":""})
+        out.append({"id":eid,"nome":text_value(r.get("evento"),"Evento sem nome"),"categoria":cat,"data_inicio":start,"data_fim":date_iso(r.get("data_fim")) or start,"hora_inicio":h1 or None,"hora_fim":h2 or None,"local":text_value(r.get("local_padronizado")) or text_value(r.get("local_informado")) or "Local não informado","endereco":text_value(r.get("endereco")) or text_value(r.get("endereco_informado")),"bairro":text_value(r.get("bairro")) or text_value(r.get("bairro_informado")),"descricao":text_value(r.get("descricao")),"lat":lat,"lng":lng,"instagram_url":text_value(r.get("url_post")),"foto":text_value(r.get("foto_url"))})
     return out
 
 def render_webgis(df, template_path: Path):

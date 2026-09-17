@@ -620,7 +620,7 @@ function formatDataHora(ev){
 
 function popupContent(ev){
   return `<div style="min-width:200px;max-width:250px">
-    ${ev.foto?`<img class="popup-photo" src="${ev.foto}" alt="${ev.nome}" loading="lazy" referrerpolicy="no-referrer">`:""}
+    ${ev.foto?`<img class="popup-photo" src="${ev.foto}" alt="Foto da publicação de ${ev.nome}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`:""}
     <b style="font-size:14px">${ev.nome}</b>
     <div style="font-size:11.5px;color:var(--coral-dark);font-weight:700;margin-top:4px">${formatDataHora(ev)}</div>
     <div style="font-size:12px;color:#5d7278;margin-top:5px">${ev.descricao}</div>
@@ -682,7 +682,7 @@ function selectEvent(ev,marker){
   document.getElementById("sheetSubtitle").textContent=formatDataHora(ev);
   document.getElementById("sheetBody").innerHTML=`
     <div class="event-card">
-      ${ev.foto?`<img class="popup-photo" src="${ev.foto}" alt="${ev.nome}">`:""}
+      ${ev.foto?`<img class="popup-photo" src="${ev.foto}" alt="Foto da publicação de ${ev.nome}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`:""}
       <h3>${categoriasInfo[ev.categoria].icone} ${ev.nome}</h3>
       <p>${ev.descricao}</p>
       <div class="meta">
