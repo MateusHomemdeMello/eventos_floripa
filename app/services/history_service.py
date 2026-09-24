@@ -5,7 +5,7 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -22,6 +22,15 @@ def post_key(row):
 
 def records(frame):
     return json.loads(frame.to_json(orient='records', date_format='iso'))
+
+
+def json_default(value):
+    """Encode dates carried by pandas rows without discarding timezone/precision."""
+    if value is pd.NaT or value is pd.NA:
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f'Object of type {type(value).__name__} is not JSON serializable')
 
 
 class PostHistory:
@@ -102,7 +111,7 @@ class PostHistory:
                 for key, entry in self.entries.items():
                     status = 'concluido' if len(entry['final']) == len(entry['events']) else 'here_pendente'
                     writer.writerow({'post_id': key, 'status': status, 'updated_at': entry['updated_at'],
-                                     **{name+'_json': json.dumps(entry[source], ensure_ascii=False, allow_nan=False)
+                                     **{name+'_json': json.dumps(entry[source], ensure_ascii=False, allow_nan=False, default=json_default)
                                         for name, source in [('post','post'), ('events','events'), ('final','final')]}})
                 target.flush()
                 os.fsync(target.fileno())

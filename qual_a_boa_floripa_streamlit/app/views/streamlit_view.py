@@ -31,15 +31,19 @@ def render(root: Path):
     st.title("Qual a Boa Floripa")
     st.caption("Instagram → Apify → IA → HERE → CSVs de levantamentos / WebGIS")
     history_path=root/'data/banco_posts.csv'
-    if 'history_loaded' not in st.session_state:
+    controller=PipelineController(AppConfig(),Secrets('','',''),root)
+    if st.session_state.get('saved_state_signature') != controller.saved_state_signature():
         try:
-            controller=PipelineController(AppConfig(),Secrets('','',''),root)
             saved_stages,saved_result=controller.restore_state()
             st.session_state['stages']=saved_stages
             if saved_result:
                 st.session_state['result']=saved_result
                 st.session_state['downloads']={path.name:path.read_bytes() for path in (saved_result.webgis_path,)}
+            else:
+                st.session_state.pop('result',None)
+                st.session_state.pop('downloads',None)
             st.session_state['history_loaded']=True
+            st.session_state['saved_state_signature']=controller.saved_state_signature()
         except (RuntimeError,OSError) as exc:
             st.error(f'Não foi possível carregar o histórico: {exc}')
             st.stop()
@@ -78,7 +82,7 @@ def render(root: Path):
             except RuntimeError as exc: st.error(str(exc))
     tab1,tab2,tab3=st.tabs(["Processamento","Resultados","WebGIS"])
     with tab1:
-        st.caption('O banco local é consultado após a coleta. Posts já analisados reutilizam os resultados; somente etapas pendentes são executadas.')
+        st.caption('Os dataframes salvos são carregados automaticamente ao abrir a ferramenta. Processar executa apenas as etapas pendentes.')
         st.info("As chaves são usadas nesta sessão e incluídas no JSON quando você exporta as configurações.")
         start=st.button("Executar processamento completo",type="primary",use_container_width=True)
         st.caption('Ou execute uma etapa por vez. Cada etapa reaproveita o resultado persistido da anterior.')
@@ -95,7 +99,7 @@ def render(root: Path):
             st.subheader(label)
             slots[name]=st.empty()
             if name in stages: slots[name].dataframe(stages[name],use_container_width=True)
-            else: slots[name].info('Aguardando esta etapa.')
+            else: slots[name].info('Ainda não há dados salvos para esta etapa.')
         def publish(name, frame):
             stages[name]=frame
             slots[name].dataframe(frame,use_container_width=True)
@@ -108,10 +112,6 @@ def render(root: Path):
               controller=PipelineController(config,Secrets(openai,apify,here),root)
               try:
                 if action=='full':
-                    st.session_state.pop('result', None)
-                    st.session_state.pop('downloads', None)
-                    stages.clear()
-                    for slot in slots.values(): slot.info('Aguardando esta etapa.')
                     result=controller.run(status=status.info,progress=lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)),on_stage=publish)
                     st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
                     st.session_state['result']=result; bar.progress(1.0); status.success("Processamento concluído.")
@@ -151,7 +151,16 @@ def render(root: Path):
     with tab2:
         if history_path.exists():
             st.download_button('Baixar banco de posts CSV',history_path.read_bytes(),file_name=history_path.name,mime='text/csv')
-        if not result: st.warning("Execute o processamento primeiro.")
+        if not result:
+            saved=st.session_state.get('stages',{})
+            if saved:
+                st.caption('Dados salvos disponíveis. Você pode consultá-los e baixar os CSVs sem executar o processamento.')
+                for name,label in [('posts','Posts coletados'),('events','Eventos analisados'),('final','Geolocalizações')]:
+                    if name in saved:
+                        st.subheader(label)
+                        st.dataframe(saved[name],use_container_width=True)
+            else:
+                st.info('Nenhum levantamento salvo foi encontrado nesta pasta do projeto.')
         else:
             c1,c2,c3=st.columns(3); c1.metric("Posts",len(result.posts)); c2.metric("Eventos",len(result.events)); c3.metric("Revisões",int(result.final.get('necessita_revisao',False).fillna(False).sum()) if 'necessita_revisao' in result.final else 0)
             st.caption('Desmarque “Publicar” para manter um evento no histórico sem exibi-lo no WebGIS ou no site.')
@@ -180,4 +189,4 @@ def render(root: Path):
             st.download_button('Baixar mapa HTML',html,file_name=result.webgis_path.name,mime='text/html',key='download_map')
             st.caption('O HTML pode ser aberto no navegador. Os mapas base precisam de conexão com a internet.')
             components.html(html.decode('utf-8'),height=760,scrolling=False)
-        else: st.warning("O WebGIS aparecerá aqui após o processamento.")
+        else: st.info("Ainda não há eventos no banco de processamento para gerar o WebGIS. Os levantamentos salvos podem ser consultados nas outras abas.")

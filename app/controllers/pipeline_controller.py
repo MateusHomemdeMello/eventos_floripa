@@ -34,6 +34,13 @@ class PipelineController:
     def survey_paths(self):
         return {stage: self.root/'data/levantamentos'/name for stage,name in STAGE_FILES.items()}
 
+    def saved_state_signature(self):
+        paths=[self.history_path,self.collected_path,self.extraction_failures_path,
+               self.location_failures_path,*self.survey_paths.values()]
+        return (str(self.root.resolve()),'autoload-v2',tuple(
+            (str(path),path.stat().st_mtime_ns,path.stat().st_size) if path.exists()
+            else (str(path),None,None) for path in paths))
+
     def _sync_surveys(self, history):
         posts,events,final=history.frames()
         # Unlocated events belong in the UI, but not in the HERE survey yet.
@@ -200,6 +207,16 @@ class PipelineController:
         if not events.empty: stages['events']=events
         if not final.empty: stages['final']=final
         result=self.export_stage(collected) if not events.empty else None
+        # Survey CSVs are also readable without an operational bank. Display them
+        # without importing them as completed work or triggering external APIs.
+        for stage,path in self.survey_paths.items():
+            if stage not in stages and path.exists():
+                try:
+                    frame=with_dates(pd.read_csv(path))
+                except pd.errors.EmptyDataError:
+                    continue
+                if not frame.empty:
+                    stages[stage]=frame
         return stages,result
 
     def set_publication(self, changes):

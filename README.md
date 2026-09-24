@@ -73,6 +73,14 @@ uma nova observação de coleta; reutilizar sua análise/localização já salva
 gera outra observação nessas etapas. Posts sem eventos permanecem no CSV de
 coleta e no banco; não geram linhas artificiais no CSV de eventos.
 
+Os dataframes salvos são exibidos automaticamente na abertura do Streamlit,
+sem credenciais ou chamadas às APIs. Em cada atualização da tela, a ferramenta
+verifica se os arquivos mudaram e restaura os dados quando necessário. Se uma
+etapa não estiver disponível no banco/snapshot, seu CSV de levantamentos é
+usado para consulta, sem importá-lo como trabalho concluído no banco. Iniciar
+um novo processamento mantém as tabelas anteriores visíveis até os novos
+resultados chegarem.
+
 Os registros existentes são preservados e os novos são acrescentados. A gravação
 usa substituição atômica do arquivo completo, mantendo a união das colunas, para
 evitar CSV parcialmente escrito e permitir novos campos. Listas e objetos são
