@@ -113,3 +113,18 @@ def test_invalid_existing_survey_not_overwritten(tmp_path):
     with pytest.raises(RuntimeError,match='preservado'):
         append_survey(path,'posts',collection('A'))
     assert path.read_text()=='invalid'
+
+
+def test_collection_append_failure_recovered_before_next_collection(controller):
+    fail_once=True
+    def interrupted(path,stage,frame):
+        nonlocal fail_once
+        if stage=='posts' and not frame.empty and fail_once:
+            fail_once=False
+            raise OSError('CSV temporarily locked')
+        return append_survey(path,stage,frame)
+    with patch('app.controllers.pipeline_controller.collect_posts',return_value=collection('A')) as scraper, patch('app.controllers.pipeline_controller.append_survey',side_effect=interrupted):
+        with pytest.raises(OSError): controller.collect_stage()
+        scraper.return_value=collection('B')
+        controller.collect_stage()
+    assert list(read(controller,'posts').shortcode)==['A','B']
