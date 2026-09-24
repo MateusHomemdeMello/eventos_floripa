@@ -56,19 +56,24 @@ def events_for_webgis(df, today=None):
         reference = reference.astimezone(ZoneInfo('America/Sao_Paulo')) if reference.tzinfo else reference.replace(tzinfo=ZoneInfo('America/Sao_Paulo'))
     today = reference.date() if isinstance(reference, datetime) else reference
     out=[]
-    if df.empty or not {"latitude","longitude"}.issubset(df.columns): return out
+    if df.empty: return out
     for _,r in df.iterrows():
         publish=r.get("publicar_webgis",True)
         if isinstance(publish,str):
             if publish.strip().lower() in {"false","0","não","nao"}: continue
         elif not pd.isna(publish) and not bool(publish): continue
         lat,lng=finite(r.get("latitude")),finite(r.get("longitude")); start=date_iso(r.get("data_inicio"))
-        if lat is None or lng is None or not start or not(-90<=lat<=90) or not(-180<=lng<=180): continue
+        if not start: continue
+        if lat is None or lng is None or not(-90<=lat<=90) or not(-180<=lng<=180):
+            lat,lng=None,None
         end=date_iso(r.get('data_fim')) or start
         if end < start or end < today.isoformat(): continue
         cat=normalized_category(r.get("categoria"),r.get("evento"),r.get("descricao"))
         try: eid=int(r.get("id"))
         except Exception: eid=len(out)+1
+        # History identity is stable even if rows are reordered between exports.
+        if text_value(r.get('_post_id')):
+            eid=f"{text_value(r.get('_post_id'))}:{text_value(r.get('_event_index'),'0')}"
         h1=hhmm(r.get("horario_inicio")); h2=hhmm(r.get("horario_fim"))
         if isinstance(reference, datetime) and end == today.isoformat() and h2 and h2 <= reference.strftime('%H:%M'):
             continue
@@ -92,30 +97,9 @@ def generate_webgis(df, template_path: Path, output_path: Path):
     output_path.write_text(render_webgis(df,template_path),encoding='utf-8')
     return len(events_for_webgis(df))
 
-def generate_interface_data(df, interface_dir: Path):
-    interface_dir.mkdir(parents=True,exist_ok=True)
-    reference=datetime.now(ZoneInfo('America/Sao_Paulo'))
-    updated=reference.isoformat(timespec='minutes')
-    payload={"atualizado_em":updated,"eventos":events_for_webgis(df,reference)}
-    data=json.dumps(payload,ensure_ascii=False,indent=2,allow_nan=False).replace("</","<\\/")
-    (interface_dir/'dados.js').write_text('window.QUAL_A_BOA_DATA = '+data+';\n',encoding='utf-8')
-    return len(payload['eventos'])
-
-def excel_safe(df):
-    out=df.copy()
-    for col in out.columns:
-        if isinstance(out[col].dtype,pd.DatetimeTZDtype): out[col]=out[col].dt.tz_convert("America/Sao_Paulo").dt.tz_localize(None)
-    return out
-
 def export_all(final, posts, extraction_failures, location_failures, output_dir: Path, template_path: Path):
-    output_dir.mkdir(parents=True,exist_ok=True); csv=output_dir/'eventos_processados.csv'; xlsx=output_dir/'eventos_processados.xlsx'; webgis=output_dir/'qual_a_boa_floripa.html'
-    f,p,ef,lf=map(excel_safe,[final,posts,extraction_failures,location_failures])
-    f=f.drop(columns=[name for name in f.columns if str(name).startswith('_')])
-    f.to_csv(csv,index=False,encoding='utf-8-sig')
-    with pd.ExcelWriter(xlsx,engine='openpyxl') as writer:
-        f.to_excel(writer,sheet_name='eventos',index=False); p.to_excel(writer,sheet_name='posts_coletados',index=False)
-        if not ef.empty: ef.to_excel(writer,sheet_name='falhas_extracao',index=False)
-        if not lf.empty: lf.to_excel(writer,sheet_name='falhas_localizacao',index=False)
+    # Only the distributable WebMap is written here. Pipeline history remains separate.
+    output_dir.mkdir(parents=True,exist_ok=True)
+    webgis=output_dir/'qual_a_boa_floripa.html'
     generate_webgis(final,template_path,webgis)
-    generate_interface_data(final,output_dir.parent.parent/'interface')
-    return csv,xlsx,webgis
+    return webgis

@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import pandas as pd
 
@@ -10,6 +11,7 @@ from app.services.ai_service import extract_events
 from app.services.geocoding_service import geocode_events
 from app.services.export_service import export_all
 from app.services.history_service import PostHistory, post_key, records
+from app.services.survey_service import STAGE_FILES, append_survey, stage_time, with_dates
 
 
 class PipelineController:
@@ -28,6 +30,30 @@ class PipelineController:
     @property
     def location_failures_path(self): return self.root/'data/falhas_localizacao.json'
 
+    @property
+    def survey_paths(self):
+        return {stage: self.root/'data/levantamentos'/name for stage,name in STAGE_FILES.items()}
+
+    def _sync_surveys(self, history):
+        posts,events,final=history.frames()
+        # Unlocated events belong in the UI, but not in the HERE survey yet.
+        completed=[str(row['_event_index']) in history.entries[row['_post_id']]['final']
+                   for row in records(final)]
+        located=final.loc[completed] if len(final) else final
+        for stage,frame in [('posts',posts),('events',events),('final',located)]:
+            append_survey(self.survey_paths[stage],stage,frame)
+
+    def _save_extraction(self, history, post, found):
+        stamp=stage_time()
+        source=records(pd.DataFrame([post]))[0]
+        source['data_analise_ia']=stamp
+        events=[{**event,'id_coleta':source.get('id_coleta'),
+                 'data_scraping':source.get('data_scraping'),
+                 'data_analise_ia':stamp,'data_geolocalizacao':None} for event in (found or [])]
+        history.add_extraction(post_key(post),source,events)
+        history.save()
+        self._sync_surveys(history)
+
     def _save_frame(self,path,frame):
         path.parent.mkdir(parents=True,exist_ok=True)
         path.write_text(json.dumps(records(frame),ensure_ascii=False,allow_nan=False),encoding='utf-8')
@@ -39,24 +65,30 @@ class PipelineController:
     def _load_collected(self):
         if not self.collected_path.exists():
             raise RuntimeError('Nenhuma coleta salva. Execute primeiro a etapa 1 — Apify.')
-        return pd.DataFrame(json.loads(self.collected_path.read_text(encoding='utf-8')))
+        return with_dates(pd.DataFrame(json.loads(self.collected_path.read_text(encoding='utf-8'))))
 
     def collect_stage(self, status=None):
         if status: status('Coletando publicações na Apify...')
-        posts=collect_posts(self.secrets.apify_api_token,self.config).copy()
+        posts=with_dates(collect_posts(self.secrets.apify_api_token,self.config))
+        posts['data_scraping']=stage_time()
+        posts['id_coleta']=str(uuid4())
         keys=posts.apply(post_key,axis=1) if not posts.empty else pd.Series(dtype=object)
         if keys.isna().any():
             raise RuntimeError('A coleta retornou posts sem shortcode ou URL válida do Instagram.')
-        self.collected_path.parent.mkdir(parents=True,exist_ok=True)
-        self.collected_path.write_text(json.dumps(records(posts),ensure_ascii=False,allow_nan=False),encoding='utf-8')
         with PostHistory.transaction(self.history_path) as history:
+            self._sync_surveys(history)
+            if self.collected_path.exists():
+                append_survey(self.survey_paths['posts'],'posts',self._load_collected())
             posts['ja_analisado']=keys.isin(history.entries)
+            self._save_frame(self.collected_path,posts)
+            append_survey(self.survey_paths['posts'],'posts',posts)
         if status: status(f'{len(posts)} posts coletados e salvos.')
         return posts
 
     def extraction_stage(self, posts=None, status=None, progress=None, on_saved=None):
-        posts=self._load_collected() if posts is None else posts.copy()
+        posts=self._load_collected() if posts is None else with_dates(posts)
         with PostHistory.transaction(self.history_path) as history:
+            self._sync_surveys(history)
             keys=posts.apply(post_key,axis=1) if not posts.empty else pd.Series(dtype=object)
             posts['ja_analisado']=keys.isin(history.entries)
             fresh=posts.loc[~posts['ja_analisado']].copy()
@@ -75,8 +107,7 @@ class PipelineController:
                         self._save_frame(self.extraction_failures_path,pd.concat([current,row],ignore_index=True))
                         return
                     key=post_key(post)
-                    history.add_extraction(key,records(pd.DataFrame([post]))[0],found or [])
-                    history.save()
+                    self._save_extraction(history,post,found)
                     if on_saved: on_saved(history.frames()[1])
 
                 extracted,failures=extract_events(self.secrets.openai_api_key,fresh,self.config,progress,persist)
@@ -88,7 +119,7 @@ class PipelineController:
                     if index in failed_indices or key in failed_keys: continue
                     matches=[event for event in event_rows if post_key(event)==key]
                     if key not in history.entries:
-                        history.add_extraction(key,records(pd.DataFrame([post]))[0],matches)
+                        self._save_extraction(history,post,matches)
                 history.save()
             _,events,_=history.frames()
         self._save_frame(self.extraction_failures_path,failures)
@@ -98,6 +129,7 @@ class PipelineController:
     def location_stage(self, status=None, progress=None, on_saved=None):
         self._save_frame(self.location_failures_path,pd.DataFrame())
         with PostHistory.transaction(self.history_path) as history:
+            self._sync_surveys(history)
             pending,references=history.pending()
             if pending.empty:
                 if status: status('Não há localizações pendentes.')
@@ -113,9 +145,11 @@ class PipelineController:
                 key,event_index=references[index]
                 saved=dict(result); saved.pop('_source_index',None)
                 saved={**history.entries[key]['events'][int(event_index)],**saved}
+                saved['data_geolocalizacao']=stage_time()
                 history.entries[key]['final'][event_index]=saved
                 history.entries[key]['updated_at']=datetime.now(timezone.utc).isoformat()
                 history.save()
+                self._sync_surveys(history)
                 if on_saved: on_saved(history.frames()[2])
 
             located,failures=geocode_events(pending,self.secrets.here_api_key,self.secrets.openai_api_key,self.config,progress,persist)
@@ -126,9 +160,11 @@ class PipelineController:
                 if event_index in history.entries[key]['final']: continue
                 saved=records(pd.DataFrame([row]))[0]
                 saved={**history.entries[key]['events'][int(event_index)],**saved}
+                saved['data_geolocalizacao']=stage_time()
                 history.entries[key]['final'][event_index]=saved
                 history.entries[key]['updated_at']=datetime.now(timezone.utc).isoformat()
                 history.save()
+                self._sync_surveys(history)
             final=history.frames()[2]
         self._save_frame(self.location_failures_path,failures)
         if status: status(f'Localização concluída: {len(failures)} falhas pendentes.')
@@ -136,22 +172,29 @@ class PipelineController:
 
     def export_stage(self, posts=None, extraction_failures=None, location_failures=None, status=None):
         with PostHistory.transaction(self.history_path) as history:
+            self._sync_surveys(history)
             saved_posts,events,final=history.frames()
         if posts is None:
             try: posts=self._load_collected()
             except RuntimeError: posts=saved_posts
         extraction_failures=extraction_failures if extraction_failures is not None else self._load_frame(self.extraction_failures_path)
         location_failures=location_failures if location_failures is not None else self._load_frame(self.location_failures_path)
-        if status: status('Exportando banco, WebGIS e interface...')
-        paths=export_all(final,posts,extraction_failures,location_failures,self.root/'data/output',self.root/'assets/webgis_template.html')
-        return PipelineResult(posts,events,final,extraction_failures,location_failures,*paths)
+        if status: status('Gerando WebMap em um único HTML...')
+        webgis=export_all(final,posts,extraction_failures,location_failures,self.root/'data/output',self.root/'assets/webgis_template.html')
+        return PipelineResult(posts,events,final,extraction_failures,location_failures,webgis)
 
     def restore_state(self):
         with PostHistory.transaction(self.history_path) as history:
-            history.migrate_export(self.root/'data/output/eventos_processados.csv')
+            legacy=self.root/'data/output/eventos_processados.csv'
+            if not legacy.exists():
+                legacy=self.root/'data/backups/legacy_output/eventos_processados.csv'
+            history.migrate_export(legacy)
+            self._sync_surveys(history)
             saved_posts,events,final=history.frames()
         try: collected=self._load_collected()
         except RuntimeError: collected=saved_posts
+        with PostHistory.transaction(self.history_path):
+            append_survey(self.survey_paths['posts'],'posts',collected)
         stages={}
         if not collected.empty: stages['posts']=collected
         if not events.empty: stages['events']=events

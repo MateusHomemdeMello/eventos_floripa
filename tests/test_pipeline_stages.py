@@ -14,11 +14,13 @@ def test_stages_published_before_next_service_and_preserved_on_failure(tmp_path)
     events = pd.DataFrame({'evento': ['Show'], 'shortcode':['ABC'], 'url_post':['https://www.instagram.com/p/ABC/']})
 
     def extract(*args):
-        assert snapshots['posts'].drop(columns='ja_analisado').equals(posts)
+        assert snapshots['posts'][posts.columns].equals(posts)
+        assert snapshots['posts']['data_scraping'].notna().all()
         return events, pd.DataFrame()
 
     def locate(*args):
-        assert snapshots['events'].equals(events)
+        assert snapshots['events'][events.columns].equals(events)
+        assert snapshots['events']['data_analise_ia'].notna().all()
         events.loc[0, 'evento'] = 'changed'
         raise RuntimeError('HERE unavailable')
 

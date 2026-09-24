@@ -12,7 +12,7 @@ app/
   services/     # Apify, OpenAI, HERE e exportação
 data/output/    # arquivos gerados localmente
 assets/         # template HTML do WebGIS
-interface/      # site estático e dados exportados
+interface/      # versão antiga, não utilizada pelo gerador atual
 streamlit_app.py
 requirements.txt
 ```
@@ -50,6 +50,40 @@ HERE_API_KEY = "..."
 
 ## Fluxo
 
+### Datas de processamento e CSVs cumulativos
+
+Os três dataframes exibem `data_scraping`, `data_analise_ia` e
+`data_geolocalizacao`, com data/hora ISO 8601 e fuso de São Paulo (`-03:00`).
+A coleta registra sua conclusão; IA e HERE registram a conclusão de cada
+resultado. Etapas ainda não executadas e datas históricas desconhecidas ficam
+em branco. `data_publicacao` continua sendo a data original do post.
+
+Os levantamentos são armazenados automaticamente em:
+
+* `data/levantamentos/posts_coletados.csv`: cada post de cada nova coleta;
+* `data/levantamentos/eventos_analisados.csv`: novos eventos extraídos pela IA;
+* `data/levantamentos/eventos_geolocalizados.csv`: resultados concluídos da HERE,
+  inclusive retornos sem coordenadas que precisem de revisão.
+
+Há três botões para baixar esses arquivos na aba **Processamento**. Novas
+coletas recebem `id_coleta`; os resultados seguintes preservam essa origem.
+Cada linha tem `id_registro` para evitar duplicação ao restaurar a sessão ou
+retomar uma gravação interrompida. Consultar novamente um post pela Apify gera
+uma nova observação de coleta; reutilizar sua análise/localização já salva não
+gera outra observação nessas etapas. Posts sem eventos permanecem no CSV de
+coleta e no banco; não geram linhas artificiais no CSV de eventos.
+
+Os registros existentes são preservados e os novos são acrescentados. A gravação
+usa substituição atômica do arquivo completo, mantendo a união das colunas, para
+evitar CSV parcialmente escrito e permitir novos campos. Listas e objetos são
+JSON dentro das células. UTF-8 com BOM preserva os acentos ao abrir no Excel.
+O mesmo bloqueio do banco protege as atualizações simultâneas dos levantamentos.
+
+Ao abrir uma base antiga, seus resultados são incorporados uma única vez aos
+CSVs, sem inventar datas anteriores. Falhas não recebem data de conclusão;
+continuam nos arquivos de falhas. O WebMap permanece um único HTML em
+`data/output`; os CSVs são arquivos de histórico do processamento separados.
+
 ### Custos, datas e localização
 
 O modelo padrão é `gpt-4.1-mini`. As instruções fixas precedem os dados do post,
@@ -60,8 +94,9 @@ padrão e pode ser ativada na barra lateral (custo adicional). JSONs importados
 preservam o modelo e a opção de busca web que foram salvos neles.
 
 A extração procura o período completo de visitação, separando encerramento de
-inauguração e de prazos de inscrição. O calendário repete eventos em cada dia
-do intervalo, inclusive o último, respeitando o filtro de datas. Eventos encerrados
+inauguração e de prazos de inscrição. A agenda mostra eventos de longa duração uma
+única vez em “Em cartaz agora” quando já começaram, preservando o intervalo completo.
+Os filtros verificam a interseção com esse intervalo. Eventos encerrados
 antes da atualização não são exportados para o mapa; quando o horário final é
 conhecido, o corte também considera esse horário em America/Sao_Paulo. Sem horário
 final, o evento permanece durante o último dia. Sem data final, só há evidência
@@ -93,15 +128,17 @@ processamentos simultâneos sobre o mesmo banco. Um banco inválido interrompe o
 processamento sem sobrescrever o arquivo. Guarde cópias de segurança desse CSV.
 
 Na primeira abertura, se o banco ainda não existir, a ferramenta aproveita
-`data/output/eventos_processados.csv`: recupera os eventos extraídos e considera
+`data/output/eventos_processados.csv` (ou sua cópia arquivada em
+`data/backups/legacy_output`): recupera os eventos extraídos e considera
 pendente a localização dos registros sem coordenadas. Esse arquivo antigo não
 permite recuperar posts que não produziram eventos.
 
-O CSV e o Excel de saída mantêm o histórico completo. O HTML usa apenas eventos
-com coordenadas válidas e data final maior ou igual ao dia da exportação, no fuso
+O banco intermediário mantém o histórico completo. O HTML usa apenas eventos
+com data final maior ou igual ao dia da exportação, no fuso
 `America/Sao_Paulo`. Sem `data_fim`, usa `data_inicio`. Eventos que terminam hoje
 permanecem; datas de início inválidas e intervalos invertidos ficam fora do mapa
-e calendário. Eventos encerrados continuam no banco para evitar reanálises.
+e agenda. Eventos sem coordenadas aparecem na agenda/lista, sem marcador.
+Eventos encerrados continuam no banco para evitar reanálises.
 
 Na barra lateral, use **Importar configurações JSON** para selecionar um arquivo
 ou colar JSON e clicar em **Aplicar JSON**. **Exportar configurações JSON** salva
@@ -116,25 +153,33 @@ HTTP 401/403 exige conferir a chave, o acesso a Geocoding & Search e as restriç
 de Trusted Domains no portal HERE. Durante o processamento, a HERE só é
 consultada quando há eventos com localização pendente.
 
-O WebGIS oferece ruas OpenStreetMap, satélite Esri e base cinza Esri nos modos
-claro e escuro (o escuro aplica um filtro somente aos tiles). Os mapas precisam
-de internet. O HTML exibido e baixado usa o template atualizado, inclusive para
-resultados que já estão na sessão.
+O WebMap abre diretamente no navegador, sem servidor ou framework frontend.
+OpenStreetMap Standard é a base inicial. Leaflet, MarkerCluster, fontes e tiles
+precisam de internet. CSS, JavaScript e eventos estão embutidos no único HTML.
+O painel Streamlit existente continua sendo apenas a interface de processamento.
 
-No HTML, o botão de relógio abre os filtros de data inicial/final e faixa diária
-de horário. As categorias e os filtros são compartilhados entre Mapa e Agenda,
-incluindo a busca e a lista de eventos. Eventos de vários dias são incluídos
-quando seu período cruza as datas escolhidas. Com início e fim conhecidos,
-o filtro de hora considera a interseção de horários; com apenas um horário,
-considera somente esse horário. A opção de incluir eventos sem horário pode ser
-desmarcada para mostrar apenas horários conhecidos. Limpar filtros restaura
-todas as datas, horários e categorias.
+Mapa e Agenda compartilham busca sem acentos, categoria, favoritos e período
+(todos, hoje, hoje à noite, amanhã, fim de semana). “Hoje à noite” considera
+horários conhecidos que se sobrepõem ao período a partir das 18h; horários
+ausentes não são inventados. O fim de semana corresponde a sábado e domingo,
+incluindo o fim de semana atual aos sábados/domingos.
+
+Há um marcador por endereço/local. Seu badge conta os eventos filtrados e o
+cluster soma os eventos de todos os marcadores. O detalhe abre um carrossel com
+setas, teclado, dots e swipe. “Me leva pra algum rolê” sorteia somente entre os
+resultados filtrados e abre o evento escolhido no carrossel correto.
+
+Favoritos são gravados em localStorage por identidade do post/evento e filtram
+todas as visualizações. Ao mover o HTML para outro caminho ou navegador, o
+armazenamento local pode mudar; se bloqueado, os favoritos duram só a sessão.
+Geolocalização e compartilhamento dependem do navegador e suas permissões.
+Fotos remotas são opcionais, com ícone da categoria enquanto carregam ou se falham.
 
 1. Usuário informa perfis e parâmetros.
 2. `PipelineController` coleta posts pela Apify.
 3. `ai_service` interpreta legenda + imagens com OpenAI.
 4. `geocoding_service` valida/localiza eventos pela HERE e pode usar pesquisa web da OpenAI como fallback.
-5. `export_service` gera CSV, XLSX, o WebGIS HTML e atualiza `interface/dados.js`.
+5. `export_service.export_all` gera somente `data/output/qual_a_boa_floripa.html`.
 6. Streamlit exibe progresso, tabela, erros, downloads e prévia do WebGIS.
 
 O processamento pode ser executado de ponta a ponta ou em quatro etapas
@@ -143,19 +188,24 @@ salva em `data/posts_coletados.json`; cada extração e localização concluída
 persistida no banco imediatamente, permitindo retomar após interrupções. As
 falhas ficam em `data/falhas_extracao.json` e `data/falhas_localizacao.json`.
 Ao reabrir a ferramenta, todas as etapas salvas são restauradas. Extrair e
-Localizar também atualizam Resultados, WebGIS e o site automaticamente.
+Localizar também atualizam Resultados e WebGIS automaticamente.
 
 Na aba **Resultados**, a coluna **Publicar** controla a presença do evento no
-WebGIS e no site estático. Desmarcar e salvar mantém o evento no histórico, CSV
-e Excel, mas o omite das duas interfaces públicas.
+WebGIS. Desmarcar e salvar mantém o evento no banco, mas o omite do HTML público.
 
-## Interface web estática
+## Gerador e testes do HTML
 
-A pasta `interface` contém uma aplicação web responsiva independente do Streamlit.
-Ela oferece mapa, agenda, busca, categorias, filtros de data e detalhes dos eventos.
-Ao concluir **Iniciar processamento**, o mesmo conjunto de eventos vigentes usado
-no WebGIS é gravado em `interface/dados.js`. Assim, basta publicar essa pasta em
-um serviço de hospedagem estática para disponibilizar a versão atualizada do site.
+`assets/webgis_template.html` define a interface; `events_for_webgis` prepara os
+registros; `render_webgis` serializa JSON com UTF-8 e proteção de fechamento de
+script; `generate_webgis` grava o HTML. Os delimitadores EVENTOS_INICIO/FIM são
+preservados. Não há dependência de arquivos locais auxiliares. A pasta antiga
+`interface` não recebe novas exportações.
+
+Execute `python -m pytest tests -q`. Os cenários de navegador estão em
+`tests/test_webmap_browser.py` e usam Playwright/Chromium em desktop e celular,
+com Leaflet real. Tiles e URLs de imagens quebradas são bloqueados nesses testes
+para tornar as verificações determinísticas. `python -m tests.review_webmap`
+regenera o HTML real e captura telas em `.webmap_review` para revisão visual.
 
 ## Observação
 

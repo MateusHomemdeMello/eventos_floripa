@@ -29,7 +29,7 @@ def _secret(name):
 def render(root: Path):
     st.set_page_config(page_title="Qual a Boa Floripa",page_icon="🗺️",layout="wide")
     st.title("Qual a Boa Floripa")
-    st.caption("Instagram → Apify → IA → HERE → CSV / Excel / WebGIS")
+    st.caption("Instagram → Apify → IA → HERE → CSVs de levantamentos / WebGIS")
     history_path=root/'data/banco_posts.csv'
     if 'history_loaded' not in st.session_state:
         try:
@@ -38,7 +38,7 @@ def render(root: Path):
             st.session_state['stages']=saved_stages
             if saved_result:
                 st.session_state['result']=saved_result
-                st.session_state['downloads']={path.name:path.read_bytes() for path in (saved_result.csv_path,saved_result.xlsx_path,saved_result.webgis_path)}
+                st.session_state['downloads']={path.name:path.read_bytes() for path in (saved_result.webgis_path,)}
             st.session_state['history_loaded']=True
         except (RuntimeError,OSError) as exc:
             st.error(f'Não foi possível carregar o histórico: {exc}')
@@ -113,7 +113,7 @@ def render(root: Path):
                     stages.clear()
                     for slot in slots.values(): slot.info('Aguardando esta etapa.')
                     result=controller.run(status=status.info,progress=lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)),on_stage=publish)
-                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
+                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
                     st.session_state['result']=result; bar.progress(1.0); status.success("Processamento concluído.")
                 elif action=='collect': publish('posts',controller.collect_stage(status.info))
                 elif action=='extract':
@@ -121,24 +121,31 @@ def render(root: Path):
                     publish('posts',posts); publish('events',events)
                     result=controller.export_stage(posts,extraction_failures=failures,status=status.info)
                     st.session_state['result']=result
-                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
+                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
                     status.success('Extração salva e resultados atualizados.')
                 elif action=='locate':
                     final,failures=controller.location_stage(status.info,lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)),lambda frame:publish('final',frame))
                     publish('final',final)
                     result=controller.export_stage(location_failures=failures,status=status.info)
                     st.session_state['result']=result
-                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
+                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
                     status.success('Localizações salvas e publicações atualizadas.')
                 elif action=='export':
                     result=controller.export_stage(status=status.info)
-                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
+                    st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
                     st.session_state['result']=result; status.success('Exportação concluída.')
               except HereAuthenticationError as exc: status.error(str(exc))
               except Exception as exc: status.error(f"Falha: {exc}"); st.exception(exc)
+        st.subheader('Histórico dos levantamentos em CSV')
+        st.caption('Arquivos cumulativos: novas coletas e novos resultados são acrescentados. Datas e horas usam o fuso de São Paulo. Datas antigas desconhecidas ficam em branco.')
+        survey_paths=PipelineController(config,Secrets(openai,apify,here),root).survey_paths
+        for column,(stage,label) in zip(st.columns(3),[('posts','1. Scraping CSV'),('events','2. Análise IA CSV'),('final','3. Geolocalização CSV')]):
+            path=survey_paths[stage]
+            if path.exists():
+                column.download_button(label,path.read_bytes(),file_name=path.name,mime='text/csv',key='survey_'+stage)
     result=st.session_state.get('result')
     if result and 'downloads' not in st.session_state:
-        st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
+        st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
     if result:
         st.session_state['downloads'][result.webgis_path.name]=render_webgis(result.final,root/'assets/webgis_template.html').encode('utf-8')
     with tab2:
@@ -148,7 +155,7 @@ def render(root: Path):
         else:
             c1,c2,c3=st.columns(3); c1.metric("Posts",len(result.posts)); c2.metric("Eventos",len(result.events)); c3.metric("Revisões",int(result.final.get('necessita_revisao',False).fillna(False).sum()) if 'necessita_revisao' in result.final else 0)
             st.caption('Desmarque “Publicar” para manter um evento no histórico sem exibi-lo no WebGIS ou no site.')
-            publication_columns=['publicar_webgis','evento','categoria','data_inicio','data_fim','observacoes','local_padronizado','local_informado','_post_id','_event_index']
+            publication_columns=['publicar_webgis','evento','categoria','data_inicio','data_fim','data_scraping','data_analise_ia','data_geolocalizacao','observacoes','local_padronizado','local_informado','_post_id','_event_index']
             publication_columns=[name for name in publication_columns if name in result.final.columns]
             publication=st.data_editor(result.final[publication_columns],use_container_width=True,height=440,hide_index=True,
                 disabled=[name for name in publication_columns if name!='publicar_webgis'],
@@ -158,9 +165,9 @@ def render(root: Path):
                 changes=[(row['_post_id'],row['_event_index'],row['publicar_webgis']) for _,row in publication.iterrows()]
                 result=controller.set_publication(changes)
                 st.session_state['result']=result
-                st.session_state['downloads']={path.name:path.read_bytes() for path in (result.csv_path,result.xlsx_path,result.webgis_path)}
+                st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
                 st.success('Seleção salva e publicações atualizadas.')
-            for label,path,mime in [("Baixar CSV",result.csv_path,"text/csv"),("Baixar Excel",result.xlsx_path,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),("Baixar WebGIS",result.webgis_path,"text/html")]:
+            for label,path,mime in [("Baixar WebGIS",result.webgis_path,"text/html")]:
                 st.download_button(label,st.session_state['downloads'][path.name],file_name=path.name,mime=mime)
             if not result.extraction_failures.empty:
                 with st.expander("Falhas de extração"): st.dataframe(result.extraction_failures,use_container_width=True)
@@ -169,7 +176,7 @@ def render(root: Path):
     with tab3:
         if result:
             html=st.session_state['downloads'][result.webgis_path.name]
-            st.caption(f'{len(events_for_webgis(result.final))} eventos com data vigente e coordenadas válidas no mapa e calendário. Eventos que terminam hoje são mantidos (America/Sao_Paulo).')
+            st.caption(f'{len(events_for_webgis(result.final))} eventos vigentes na agenda. Eventos sem coordenadas ficam apenas na agenda/lista. Datas e encerramento usam America/Sao_Paulo.')
             st.download_button('Baixar mapa HTML',html,file_name=result.webgis_path.name,mime='text/html',key='download_map')
             st.caption('O HTML pode ser aberto no navegador. Os mapas base precisam de conexão com a internet.')
             components.html(html.decode('utf-8'),height=760,scrolling=False)

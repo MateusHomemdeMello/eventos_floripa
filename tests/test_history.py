@@ -6,7 +6,7 @@ import pytest
 from app.controllers.pipeline_controller import PipelineController
 from app.models.config import AppConfig, Secrets
 from app.services.history_service import PostHistory, post_key
-from app.services.export_service import events_for_webgis, render_webgis, generate_interface_data
+from app.services.export_service import events_for_webgis, render_webgis
 from app.services.geocoding_service import HereAuthenticationError
 
 
@@ -100,14 +100,6 @@ def test_render_webgis_adds_last_update(tmp_path):
     html=render_webgis(pd.DataFrame(),template)
     assert '<!-- ULTIMA_ATUALIZACAO -->' not in html
     assert 'Última atualização:' in html
-
-
-def test_interface_uses_same_exported_events(tmp_path):
-    frame=pd.DataFrame([{'id':1,'evento':'Show','categoria':'musica','data_inicio':'2099-01-01','latitude':-27.6,'longitude':-48.5}])
-    assert generate_interface_data(frame,tmp_path/'interface')==1
-    data=(tmp_path/'interface/dados.js').read_text(encoding='utf-8')
-    assert 'window.QUAL_A_BOA_DATA' in data
-    assert '"nome": "Show"' in data
 
 
 def test_migration_preserves_gpt_and_retries_missing_coordinates(tmp_path):

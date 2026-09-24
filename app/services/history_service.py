@@ -111,13 +111,14 @@ class PostHistory:
             if temporary is not None and temporary.exists(): temporary.unlink()
 
     def frames(self):
+        from app.services.survey_service import with_dates
         posts, events, final = [], [], []
         for key,entry in self.entries.items():
             posts.append(entry['post'])
             images=entry['post'].get('imagens') or []
             post_photo=images[0] if isinstance(images,list) and images and isinstance(images[0],str) else None
             for index,event in enumerate(entry['events']):
-                events.append(event)
+                events.append({**event, '_post_id': key, '_event_index': index})
             for index, event in enumerate(entry['events']):
                 row = dict(entry['final'].get(str(index), event))
                 row['foto_url']=row.get('foto_url') or event.get('foto_url') or post_photo
@@ -129,7 +130,7 @@ class PostHistory:
                 final.append(row)
         output = pd.DataFrame(final)
         output['id'] = range(1, len(output)+1)
-        return pd.DataFrame(posts), pd.DataFrame(events), output
+        return with_dates(pd.DataFrame(posts)), with_dates(pd.DataFrame(events)), with_dates(output)
 
     def pending(self):
         rows, references = [], []

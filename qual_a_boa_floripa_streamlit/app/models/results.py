@@ -9,6 +9,4 @@ class PipelineResult:
     final: pd.DataFrame
     extraction_failures: pd.DataFrame
     location_failures: pd.DataFrame
-    csv_path: Path
-    xlsx_path: Path
     webgis_path: Path

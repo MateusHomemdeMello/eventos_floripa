@@ -94,6 +94,14 @@ def test_webgis_excludes_expired_but_keeps_today_and_multiday():
     assert len(frame)==7
 
 
+def test_render_webgis_adds_last_update(tmp_path):
+    template=tmp_path/'map.html'
+    template.write_text('<!-- ULTIMA_ATUALIZACAO --> /* EVENTOS_INICIO */ let eventos = []; /* EVENTOS_FIM */',encoding='utf-8')
+    html=render_webgis(pd.DataFrame(),template)
+    assert '<!-- ULTIMA_ATUALIZACAO -->' not in html
+    assert 'Última atualização:' in html
+
+
 def test_migration_preserves_gpt_and_retries_missing_coordinates(tmp_path):
     old=tmp_path/'old.csv'
     pd.DataFrame([{'url_post':'https://www.instagram.com/p/A/','evento':'Show','latitude':None,'longitude':None}]).to_csv(old,index=False)

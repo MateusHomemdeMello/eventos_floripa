@@ -80,6 +80,17 @@ class PostHistory:
     def add_extraction(self, key, post, events):
         self.entries[key] = {'post': post, 'events': events, 'final': {}, 'updated_at': datetime.now(timezone.utc).isoformat()}
 
+    def set_publication(self, post_id, event_index, publish):
+        entry=self.entries.get(str(post_id))
+        index=str(event_index)
+        if entry is None or not index.isdigit() or int(index) >= len(entry['events']):
+            raise KeyError('Evento não encontrado no banco.')
+        value=bool(publish)
+        entry['events'][int(index)]['publicar_webgis']=value
+        if index in entry['final']:
+            entry['final'][index]['publicar_webgis']=value
+        entry['updated_at']=datetime.now(timezone.utc).isoformat()
+
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
@@ -100,18 +111,26 @@ class PostHistory:
             if temporary is not None and temporary.exists(): temporary.unlink()
 
     def frames(self):
+        from app.services.survey_service import with_dates
         posts, events, final = [], [], []
-        for entry in self.entries.values():
+        for key,entry in self.entries.items():
             posts.append(entry['post'])
-            events.extend(entry['events'])
+            images=entry['post'].get('imagens') or []
+            post_photo=images[0] if isinstance(images,list) and images and isinstance(images[0],str) else None
+            for index,event in enumerate(entry['events']):
+                events.append({**event, '_post_id': key, '_event_index': index})
             for index, event in enumerate(entry['events']):
                 row = dict(entry['final'].get(str(index), event))
+                row['foto_url']=row.get('foto_url') or event.get('foto_url') or post_photo
+                row['publicar_webgis']=bool(row.get('publicar_webgis',event.get('publicar_webgis',True)))
+                row['_post_id']=key
+                row['_event_index']=index
                 if str(index) not in entry['final']:
                     row.update(necessita_revisao=True, motivo_revisao='Localização pendente')
                 final.append(row)
         output = pd.DataFrame(final)
         output['id'] = range(1, len(output)+1)
-        return pd.DataFrame(posts), pd.DataFrame(events), output
+        return with_dates(pd.DataFrame(posts)), with_dates(pd.DataFrame(events)), with_dates(output)
 
     def pending(self):
         rows, references = [], []
@@ -139,7 +158,7 @@ class PostHistory:
             extraction_fields = ['evento','categoria','data_inicio','data_fim','horario_inicio','horario_fim',
                                  'local_informado','endereco_informado','bairro_informado','referencia_local',
                                  'descricao','confianca_extracao','observacoes','perfil','data_publicacao',
-                                 'url_post','shortcode','erros_imagem']
+                                 'url_post','shortcode','foto_url','erros_imagem']
             entry['events'].append({name: row.get(name) for name in extraction_fields})
             if pd.notna(row.get('latitude')) and pd.notna(row.get('longitude')):
                 entry['final'][index] = row
