@@ -10,8 +10,9 @@ app/
   views/        # interface Streamlit
   controllers/  # orquestração do pipeline
   services/     # Apify, OpenAI, HERE e exportação
-assets/         # template HTML do WebGIS
 data/output/    # arquivos gerados localmente
+assets/         # template HTML do WebGIS
+interface/      # site estático e dados exportados
 streamlit_app.py
 requirements.txt
 ```
@@ -48,6 +49,29 @@ HERE_API_KEY = "..."
 5. Faça o deploy.
 
 ## Fluxo
+
+### Custos, datas e localização
+
+O modelo padrão é `gpt-4.1-mini`. As instruções fixas precedem os dados do post,
+favorecendo o cache automático de prefixo da OpenAI; isso não elimina a cobrança
+do prompt em cada chamada nem garante um acerto de cache. Imagens repetidas no
+mesmo post são enviadas uma única vez. A busca web auxiliar fica desativada por
+padrão e pode ser ativada na barra lateral (custo adicional). JSONs importados
+preservam o modelo e a opção de busca web que foram salvos neles.
+
+A extração procura o período completo de visitação, separando encerramento de
+inauguração e de prazos de inscrição. O calendário repete eventos em cada dia
+do intervalo, inclusive o último, respeitando o filtro de datas. Eventos encerrados
+antes da atualização não são exportados para o mapa; quando o horário final é
+conhecido, o corte também considera esse horário em America/Sao_Paulo. Sem horário
+final, o evento permanece durante o último dia. Sem data final, só há evidência
+para o dia inicial. O histórico CSV é preservado. Datas já extraídas não são
+reinterpretadas automaticamente; a melhoria do prompt vale para novas análises.
+
+A HERE repete até três vezes falhas de conexão, HTTP 429 e erros de servidor.
+HTTP 401/403 interrompe a etapa com orientação sobre credenciais e permissões.
+Falhas na busca web preservam candidatos HERE já encontrados para revisão.
+Com busca web desativada, a etapa HERE não exige chave OpenAI.
 
 ### Banco CSV e atualização incremental
 
@@ -110,8 +134,28 @@ todas as datas, horários e categorias.
 2. `PipelineController` coleta posts pela Apify.
 3. `ai_service` interpreta legenda + imagens com OpenAI.
 4. `geocoding_service` valida/localiza eventos pela HERE e pode usar pesquisa web da OpenAI como fallback.
-5. `export_service` gera CSV, XLSX e o WebGIS HTML.
+5. `export_service` gera CSV, XLSX, o WebGIS HTML e atualiza `interface/dados.js`.
 6. Streamlit exibe progresso, tabela, erros, downloads e prévia do WebGIS.
+
+O processamento pode ser executado de ponta a ponta ou em quatro etapas
+independentes: **Coletar**, **Extrair**, **Localizar** e **Exportar**. A coleta é
+salva em `data/posts_coletados.json`; cada extração e localização concluída é
+persistida no banco imediatamente, permitindo retomar após interrupções. As
+falhas ficam em `data/falhas_extracao.json` e `data/falhas_localizacao.json`.
+Ao reabrir a ferramenta, todas as etapas salvas são restauradas. Extrair e
+Localizar também atualizam Resultados, WebGIS e o site automaticamente.
+
+Na aba **Resultados**, a coluna **Publicar** controla a presença do evento no
+WebGIS e no site estático. Desmarcar e salvar mantém o evento no histórico, CSV
+e Excel, mas o omite das duas interfaces públicas.
+
+## Interface web estática
+
+A pasta `interface` contém uma aplicação web responsiva independente do Streamlit.
+Ela oferece mapa, agenda, busca, categorias, filtros de data e detalhes dos eventos.
+Ao concluir **Iniciar processamento**, o mesmo conjunto de eventos vigentes usado
+no WebGIS é gravado em `interface/dados.js`. Assim, basta publicar essa pasta em
+um serviço de hospedagem estática para disponibilizar a versão atualizada do site.
 
 ## Observação
 

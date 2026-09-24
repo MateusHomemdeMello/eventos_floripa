@@ -50,6 +50,29 @@ HERE_API_KEY = "..."
 
 ## Fluxo
 
+### Custos, datas e localização
+
+O modelo padrão é `gpt-4.1-mini`. As instruções fixas precedem os dados do post,
+favorecendo o cache automático de prefixo da OpenAI; isso não elimina a cobrança
+do prompt em cada chamada nem garante um acerto de cache. Imagens repetidas no
+mesmo post são enviadas uma única vez. A busca web auxiliar fica desativada por
+padrão e pode ser ativada na barra lateral (custo adicional). JSONs importados
+preservam o modelo e a opção de busca web que foram salvos neles.
+
+A extração procura o período completo de visitação, separando encerramento de
+inauguração e de prazos de inscrição. O calendário repete eventos em cada dia
+do intervalo, inclusive o último, respeitando o filtro de datas. Eventos encerrados
+antes da atualização não são exportados para o mapa; quando o horário final é
+conhecido, o corte também considera esse horário em America/Sao_Paulo. Sem horário
+final, o evento permanece durante o último dia. Sem data final, só há evidência
+para o dia inicial. O histórico CSV é preservado. Datas já extraídas não são
+reinterpretadas automaticamente; a melhoria do prompt vale para novas análises.
+
+A HERE repete até três vezes falhas de conexão, HTTP 429 e erros de servidor.
+HTTP 401/403 interrompe a etapa com orientação sobre credenciais e permissões.
+Falhas na busca web preservam candidatos HERE já encontrados para revisão.
+Com busca web desativada, a etapa HERE não exige chave OpenAI.
+
 ### Banco CSV e atualização incremental
 
 O banco `data/banco_posts.csv` é carregado ao abrir o aplicativo. Cada linha

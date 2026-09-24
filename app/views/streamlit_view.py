@@ -57,6 +57,8 @@ def render(root: Path):
         profiles_text=st.text_area("Perfis do Instagram (1 por linha)",height=120,key='cfg_profiles')
         days=st.number_input("Dias retroativos",1,90,key='cfg_days_back'); limit=st.number_input("Posts por execução",1,200,key='cfg_results_limit'); model=st.text_input("Modelo OpenAI",key='cfg_ai_model')
         st.subheader("Localização")
+        st.checkbox('Busca web auxiliar (custo adicional)',key='cfg_use_web_fallback')
+        values['use_web_fallback']=st.session_state['cfg_use_web_fallback']
         city=st.text_input("Cidade",key='cfg_reference_city'); state=st.text_input("Estado",key='cfg_reference_state'); radius=st.number_input("Raio máximo (km)",1.0,500.0,key='cfg_max_radius_km')
         st.subheader("Credenciais")
         for name in ['OPENAI_API_KEY','APIFY_API_TOKEN','HERE_API_KEY']:
@@ -99,7 +101,7 @@ def render(root: Path):
             slots[name].dataframe(frame,use_container_width=True)
         action=next((name for name,pressed in [('full',start),('collect',collect_only),('extract',extract_only),('locate',locate_only),('export',export_only)] if pressed),None)
         if action:
-            missing=(action=='full' and not all([openai,apify,here])) or (action=='collect' and not apify) or (action=='extract' and not openai) or (action=='locate' and not all([here,openai]))
+            missing=(action=='full' and not all([openai,apify,here])) or (action=='collect' and not apify) or (action=='extract' and not openai) or (action=='locate' and (not here or (config.use_web_fallback and not openai)))
             if missing: st.error('Informe as credenciais necessárias para esta etapa.')
             elif action in {'full','collect'} and not config.profiles: st.error("Informe pelo menos um perfil.")
             else:
@@ -146,7 +148,7 @@ def render(root: Path):
         else:
             c1,c2,c3=st.columns(3); c1.metric("Posts",len(result.posts)); c2.metric("Eventos",len(result.events)); c3.metric("Revisões",int(result.final.get('necessita_revisao',False).fillna(False).sum()) if 'necessita_revisao' in result.final else 0)
             st.caption('Desmarque “Publicar” para manter um evento no histórico sem exibi-lo no WebGIS ou no site.')
-            publication_columns=['publicar_webgis','evento','categoria','data_inicio','local_padronizado','local_informado','_post_id','_event_index']
+            publication_columns=['publicar_webgis','evento','categoria','data_inicio','data_fim','observacoes','local_padronizado','local_informado','_post_id','_event_index']
             publication_columns=[name for name in publication_columns if name in result.final.columns]
             publication=st.data_editor(result.final[publication_columns],use_container_width=True,height=440,hide_index=True,
                 disabled=[name for name in publication_columns if name!='publicar_webgis'],

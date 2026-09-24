@@ -6,7 +6,7 @@ class AppConfig:
     apify_actor_id: str = "shu8hvrXbJbY3Eb9W"
     days_back: int = 14
     results_limit: int = 20
-    ai_model: str = "gpt-5.4-mini"
+    ai_model: str = "gpt-4.1-mini"
     max_images_per_post: int = 10
     max_image_side: int = 1600
     jpeg_quality: int = 82
@@ -23,7 +23,7 @@ class AppConfig:
     here_timeout: int = 30
     min_location_confidence: float = 0.65
     min_candidate_difference: float = 0.08
-    use_web_fallback: bool = True
+    use_web_fallback: bool = False
 
 @dataclass
 class Secrets:

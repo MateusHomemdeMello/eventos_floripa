@@ -51,7 +51,10 @@ def normalized_category(value, event_name="", description=""):
     return next((name for name,terms in rules if any(term in text for term in terms)), "encontros")
 
 def events_for_webgis(df, today=None):
-    today = today or datetime.now(ZoneInfo('America/Sao_Paulo')).date()
+    reference = today or datetime.now(ZoneInfo('America/Sao_Paulo'))
+    if isinstance(reference, datetime):
+        reference = reference.astimezone(ZoneInfo('America/Sao_Paulo')) if reference.tzinfo else reference.replace(tzinfo=ZoneInfo('America/Sao_Paulo'))
+    today = reference.date() if isinstance(reference, datetime) else reference
     out=[]
     if df.empty or not {"latitude","longitude"}.issubset(df.columns): return out
     for _,r in df.iterrows():
@@ -67,16 +70,20 @@ def events_for_webgis(df, today=None):
         try: eid=int(r.get("id"))
         except Exception: eid=len(out)+1
         h1=hhmm(r.get("horario_inicio")); h2=hhmm(r.get("horario_fim"))
+        if isinstance(reference, datetime) and end == today.isoformat() and h2 and h2 <= reference.strftime('%H:%M'):
+            continue
         out.append({"id":eid,"nome":text_value(r.get("evento"),"Evento sem nome"),"categoria":cat,"data_inicio":start,"data_fim":date_iso(r.get("data_fim")) or start,"hora_inicio":h1 or None,"hora_fim":h2 or None,"local":text_value(r.get("local_padronizado")) or text_value(r.get("local_informado")) or "Local não informado","endereco":text_value(r.get("endereco")) or text_value(r.get("endereco_informado")),"bairro":text_value(r.get("bairro")) or text_value(r.get("bairro_informado")),"descricao":text_value(r.get("descricao")),"lat":lat,"lng":lng,"instagram_url":text_value(r.get("url_post")),"foto":text_value(r.get("foto_url"))})
     return out
 
 def render_webgis(df, template_path: Path):
-    template=template_path.read_text(encoding="utf-8"); events=json.dumps(events_for_webgis(df),ensure_ascii=False,indent=2,allow_nan=False).replace("</","<\\/")
+    reference=datetime.now(ZoneInfo('America/Sao_Paulo'))
+    template=template_path.read_text(encoding="utf-8"); events=json.dumps(events_for_webgis(df,reference),ensure_ascii=False,indent=2,allow_nan=False).replace("</","<\\/")
     pattern=re.compile(r"/\* EVENTOS_INICIO.*?\*/\s*let eventos = .*?;\s*/\* EVENTOS_FIM \*/",re.DOTALL)
     replacement=f"/* EVENTOS_INICIO — gerado pela aplicação */\nlet eventos = {events};\n/* EVENTOS_FIM */"
     result,count=pattern.subn(lambda _:replacement,template,count=1)
     if count!=1: raise RuntimeError("Bloco de eventos não encontrado no template WebGIS.")
-    updated=datetime.now(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y às %H:%M')
+    updated=reference.strftime('%d/%m/%Y às %H:%M')
+    result=result.replace('__DATA_ATUALIZACAO__',reference.date().isoformat())
     result=result.replace('<!-- ULTIMA_ATUALIZACAO -->','Última atualização: '+updated)
     return result
 
@@ -87,8 +94,9 @@ def generate_webgis(df, template_path: Path, output_path: Path):
 
 def generate_interface_data(df, interface_dir: Path):
     interface_dir.mkdir(parents=True,exist_ok=True)
-    updated=datetime.now(ZoneInfo('America/Sao_Paulo')).isoformat(timespec='minutes')
-    payload={"atualizado_em":updated,"eventos":events_for_webgis(df)}
+    reference=datetime.now(ZoneInfo('America/Sao_Paulo'))
+    updated=reference.isoformat(timespec='minutes')
+    payload={"atualizado_em":updated,"eventos":events_for_webgis(df,reference)}
     data=json.dumps(payload,ensure_ascii=False,indent=2,allow_nan=False).replace("</","<\\/")
     (interface_dir/'dados.js').write_text('window.QUAL_A_BOA_DATA = '+data+';\n',encoding='utf-8')
     return len(payload['eventos'])

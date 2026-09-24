@@ -1,4 +1,4 @@
-import json, math, re, unicodedata
+import json, math, re, unicodedata, time
 from difflib import SequenceMatcher
 import pandas as pd
 import requests
@@ -12,6 +12,20 @@ class HereAuthenticationError(RuntimeError):
 
 
 def request_here(url, parameters, key, timeout=30):
+    for attempt in range(3):
+        try:
+            return _request_here_once(url, parameters, key, timeout)
+        except (HereTemporaryError, requests.RequestException):
+            if attempt == 2:
+                raise RuntimeError('HERE indisponível após 3 tentativas (rede, limite de consultas ou servidor). Tente novamente a etapa de localização.') from None
+            time.sleep(2 ** attempt)
+
+
+class HereTemporaryError(RuntimeError):
+    pass
+
+
+def _request_here_once(url, parameters, key, timeout):
     try:
         response = requests.get(url, params={**parameters, 'apiKey': key.strip()}, timeout=timeout)
         if response.status_code in (401, 403):
@@ -19,11 +33,19 @@ def request_here(url, parameters, key, timeout=30):
                 f'HERE: acesso recusado (HTTP {response.status_code}). Confira a API key, '
                 'o acesso a Geocoding & Search e as restrições de Trusted Domains no portal HERE.'
             )
+        if response.status_code == 429 or response.status_code >= 500:
+            raise HereTemporaryError()
         if not response.ok:
             raise RuntimeError(f'HERE: falha HTTP {response.status_code}.')
-        return response.json().get('items', [])
+        try:
+            payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(payload.get('items'), list):
+                raise ValueError()
+            return payload['items']
+        except ValueError:
+            raise HereTemporaryError() from None
     except requests.RequestException:
-        raise RuntimeError('Não foi possível conectar à HERE. Confira a conexão e tente novamente.') from None
+        raise HereTemporaryError() from None
 
 
 def validate_here_key(key, config):
@@ -33,7 +55,7 @@ def validate_here_key(key, config):
 
 def configure(api_key, openai_key, config):
     global HERE_API_KEY, openai_client, MODELO_IA, CIDADE_REFERENCIA, ESTADO_REFERENCIA, PAIS_REFERENCIA, CODIGO_PAIS, CENTRO_REFERENCIA, RAIO_MAXIMO_KM, HERE_LIMITE_CANDIDATOS, HERE_IDIOMA, HERE_TIMEOUT, CONFIANCA_MINIMA_LOCALIZACAO, DIFERENCA_MINIMA_CANDIDATOS, USAR_BUSCA_WEB_FALLBACK
-    HERE_API_KEY=api_key; openai_client=OpenAI(api_key=openai_key); MODELO_IA=config.ai_model
+    HERE_API_KEY=api_key; openai_client=OpenAI(api_key=openai_key) if config.use_web_fallback else None; MODELO_IA=config.ai_model
     CIDADE_REFERENCIA=config.reference_city; ESTADO_REFERENCIA=config.reference_state; PAIS_REFERENCIA=config.reference_country; CODIGO_PAIS=config.country_code
     CENTRO_REFERENCIA=(config.reference_lat,config.reference_lon); RAIO_MAXIMO_KM=config.max_radius_km
     HERE_LIMITE_CANDIDATOS=config.here_candidate_limit; HERE_IDIOMA=config.here_language; HERE_TIMEOUT=config.here_timeout
@@ -951,9 +973,13 @@ def localizar_evento(
             "candidatos_here": []
         }
 
-    pesquisa_web = pesquisar_local_na_web(
-        evento
-    )
+    try:
+        pesquisa_web = pesquisar_local_na_web(evento)
+    except Exception:
+        if melhor_inicial:
+            melhor_inicial['aviso_localizacao'] = 'Busca web indisponível; resultado HERE preservado para revisão.'
+            return melhor_inicial
+        raise RuntimeError('Busca web indisponível e nenhum candidato HERE; localização pendente.') from None
 
     local_web = texto_valido(
         pesquisa_web.get("local_sugerido")
@@ -1054,17 +1080,31 @@ def localizar_evento(
         ] = pesquisa_web.get(
             "fonte_web"
         )
+        return melhor_inicial
 
-def geocode_events(events: pd.DataFrame, here_key: str, openai_key: str, config, progress=None):
+    return {'latitude': None, 'longitude': None, 'necessita_revisao': True,
+            'motivo_revisao': 'Nenhum candidato HERE após a busca web',
+            'candidatos_here': [], 'quantidade_candidatos_here': 0}
+
+def geocode_events(events: pd.DataFrame, here_key: str, openai_key: str, config, progress=None, on_result=None):
     configure(here_key,openai_key,config); located=[]; failures=[]; total=max(len(events),1)
     for n,(idx,event) in enumerate(events.iterrows(),1):
         try:
             result=localizar_evento(event)
-            if result: result["_source_index"]=idx; located.append(result)
-            else: failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":"Localização sem resultado; nova tentativa pendente."})
+            if result:
+                result["_source_index"]=idx; located.append(result)
+                if on_result: on_result(idx,result,None)
+            else:
+                error="Localização sem resultado; nova tentativa pendente."
+                failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":error})
+                if on_result: on_result(idx,None,error)
         except HereAuthenticationError:
+            if on_result:
+                on_result(idx, None, 'HERE: acesso recusado; confira a API key e as permissões de Geocoding & Search.')
             raise
-        except Exception as exc: failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":repr(exc)})
+        except Exception as exc:
+            failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":repr(exc)})
+            if on_result: on_result(idx,None,repr(exc))
         if progress: progress(n/total, f"Geocodificando eventos: {n}/{len(events)}")
     geo=pd.DataFrame(located)
     base=events.assign(id=range(1,len(events)+1)).copy()

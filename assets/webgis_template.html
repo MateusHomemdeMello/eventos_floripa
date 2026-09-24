@@ -739,10 +739,18 @@ function renderCalendar(){
     .slice().sort((a,b)=>a.data_inicio.localeCompare(b.data_inicio)||(a.hora_inicio||'99:99').localeCompare(b.hora_inicio||'99:99'));
   const grupos={};
   feats.forEach(ev=>{
-    (grupos[ev.data_inicio]=grupos[ev.data_inicio]||[]).push(ev);
+    const updated='__DATA_ATUALIZACAO__';
+    const start=[ev.data_inicio, temporalFilter.dateFrom || ev.data_inicio, /^\d{4}-\d{2}-\d{2}$/.test(updated) ? updated : ev.data_inicio].sort().pop();
+    const end=[ev.data_fim || ev.data_inicio, temporalFilter.dateTo || ev.data_fim || ev.data_inicio].sort()[0];
+    const day=new Date(start+'T12:00:00Z');
+    while(Number.isFinite(day.getTime()) && day.toISOString().slice(0,10)<=end){
+      const date=day.toISOString().slice(0,10);
+      (grupos[date]=grupos[date]||[]).push(ev);
+      day.setUTCDate(day.getUTCDate()+1);
+    }
   });
   const cal=document.getElementById("calView");
-  cal.innerHTML=Object.keys(grupos).map(data=>`
+  cal.innerHTML=Object.keys(grupos).sort().map(data=>`
     <div class="cal-day-group">
       <div class="cal-day-label">${diaLabel(data)}</div>
       ${grupos[data].map(ev=>`
