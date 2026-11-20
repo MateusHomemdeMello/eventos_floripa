@@ -7,6 +7,7 @@
 <title>Qual a Boa Floripa — encontre seu próximo rolê</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.css">
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 :root{--deep:#075c68;--ink:#193d3c;--coral:#b64e34;--cream:#fffaf0;--muted:#607570;--border:#dce5de;--shadow:0 8px 32px #163f4324}
@@ -18,11 +19,12 @@ dialog{border:0;padding:0;width:100%;max-width:480px;max-height:88dvh;margin:aut
 .mobile-random{display:none}
 @media(width < 800px){.sheet{display:none}.mobile-random{display:block}}
 @media(min-width:800px){.top{left:24px;top:24px;width:410px;right:auto;padding:18px}.brand h1{font-size:25px}.tabs button{padding:10px 13px}.sheet{left:24px;top:calc(var(--top-height,240px) + 38px);bottom:24px;right:auto;width:410px;max-height:none;border-radius:23px}.sheet.expanded{max-height:none}.sheet-toggle{pointer-events:none}.handle{display:none}.map-actions{top:100px;right:24px}.leaflet-bottom{bottom:0}.leaflet-top{top:24px}.leaflet-left{left:450px}#agenda{padding-top:30px;padding-left:470px;padding-right:32px}dialog{margin:auto;border-radius:25px;max-height:90dvh}.hero.photo{height:250px}.sheet-summary{padding:5px 0}.card-info strong{font-size:15px}}
+#basemapStatus{position:absolute;z-index:900;bottom:calc(24px + env(safe-area-inset-bottom,0px));right:12px;margin:0;max-width:min(320px,calc(100% - 24px));padding:8px 12px;border-radius:12px;background:var(--cream);box-shadow:var(--shadow);font-size:14px;pointer-events:none}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 </style>
 </head>
 <body>
-<div id="map" aria-label="Mapa de eventos de Florianópolis"></div>
+<div id="map" aria-label="Mapa de eventos de Florianópolis"><p id="basemapStatus" role="status" hidden>Mapa-base indisponível. Os marcadores continuam disponíveis.</p></div>
 <header class="top" id="top">
 <div class="brand-row"><div class="brand"><h1>Qual a Boa <span>Floripa</span></h1><p id="counts" aria-live="polite">Descubra seu próximo rolê</p></div><nav class="tabs" aria-label="Visualização"><button type="button" id="mapTab" aria-pressed="true">Mapa</button><button type="button" id="agendaTab" aria-pressed="false">Agenda</button></nav></div>
 <label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Buscar evento, lugar ou bairro..." aria-label="Buscar evento, lugar ou bairro"></label>
@@ -30,13 +32,15 @@ dialog{border:0;padding:0;width:100%;max-width:480px;max-height:88dvh;margin:aut
 <div class="rail" id="categories" aria-label="Categorias"></div>
 </header>
 <div class="map-actions" id="mapActions"><button type="button" class="round" id="locate" aria-label="Mostrar minha localização" title="Minha localização">◎</button><button type="button" class="round" id="fit" aria-label="Mostrar todos os locais" title="Ver todos os locais">⤢</button><button type="button" class="round mobile-random" id="mobileRandom" aria-label="Me leva pra algum rolê" title="Me leva pra algum rolê">🎲</button></div>
-<section class="sheet" id="sheet" aria-label="Eventos por local"><button type="button" class="sheet-toggle" id="sheetToggle" aria-expanded="false" aria-controls="sheetContent"><span class="handle"></span><span class="sheet-summary"><span id="summary"></span><span aria-hidden="true">⌃</span></span></button><div class="sheet-content" id="sheetContent"><button type="button" class="random" id="random">🎲 Me leva pra algum rolê</button><div id="placeList"></div><div class="updated">Última atualização: 20/11/2026 às 17:04</div></div></section>
+<section class="sheet" id="sheet" aria-label="Eventos por local"><button type="button" class="sheet-toggle" id="sheetToggle" aria-expanded="false" aria-controls="sheetContent"><span class="handle"></span><span class="sheet-summary"><span id="summary"></span><span aria-hidden="true">⌃</span></span></button><div class="sheet-content" id="sheetContent"><button type="button" class="random" id="random">🎲 Me leva pra algum rolê</button><div id="placeList"></div><div class="updated">Última atualização: 20/11/2026 às 17:20</div></div></section>
 <main id="agenda" hidden aria-label="Agenda de eventos"><div class="agenda-inner" id="agendaList"></div></main>
 <dialog id="detail" aria-labelledby="detailTitle"><div class="detail-top"><button type="button" class="close" id="closeDetail" aria-label="Fechar detalhes">×</button></div><div id="detailContent"></div></dialog>
 <div id="notice" role="status" hidden></div>
 <noscript>Ative o JavaScript para consultar o mapa e a agenda.</noscript>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.1.1/leaflet-maplibre-gl.js"></script>
 <script>
 'use strict';
 /* EVENTOS_INICIO — gerado pela aplicação */
@@ -1606,10 +1610,35 @@ function placeKey(e){const norm=v=>normalize(v).replace(/[^a-z0-9]/g,'');if(e.en
 function groupByPlace(events){const groups=new Map();for(const e of events){const key=placeKey(e);if(!groups.has(key))groups.set(key,{key,nome:e.local,endereco:e.endereco,bairro:e.bairro,lat:e.lat,lng:e.lng,events:[]});const p=groups.get(key);p.events.push(e);if(!hasCoordinates(p)&&hasCoordinates(e)){p.lat=e.lat;p.lng=e.lng;}}return [...groups.values()];}
 function placeIcon(place){const same=new Set(place.events.map(e=>e.categoria)).size===1,c=same?category(place.events[0].categoria):{icone:'✦',cor:'#075c68'};return L.divIcon({className:'map-pin',html:`<div class="pin" style="--pin-color:${c.cor}">${c.icone}${place.events.length>1?`<b>${place.events.length}</b>`:''}</div>`,iconSize:[40,40],iconAnchor:[20,35]});}
 function clusterEventCount(markers){return markers.reduce((sum,m)=>sum+(Number(m.options.eventCount)||1),0);}
+async function loadBasemap(){
+ const status=$('basemapStatus');
+ const unavailable=()=>{status.hidden=false;};
+ if(typeof L.maplibreGL!=='function'){unavailable();return;}
+ const controller=new AbortController();
+ const timeout=setTimeout(()=>{controller.abort();unavailable();},12000);
+ try{
+  const styleUrl='https://tiles.openfreemap.org/styles/liberty';
+  const response=await fetch(styleUrl,{signal:controller.signal});
+  if(!response.ok)throw new Error('Mapa-base indisponível');
+  const layer=L.maplibreGL({style:await response.json(),interactive:false,attributionControl:false}).addTo(map);
+  layer.getMaplibreMap().once('load',()=>{
+   clearTimeout(timeout);
+   status.hidden=true;
+   map.attributionControl.addAttribution('<a href="https://openfreemap.org/">OpenFreeMap</a> · &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> · &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>');
+  });
+ }catch{
+  clearTimeout(timeout);
+  unavailable();
+ }
+}
 function initMap(){
  if(!window.L){notify('O mapa precisa de internet. Você ainda pode consultar a agenda.');return;}
- map=L.map('map',{zoomControl:false}).setView([-27.5949,-48.5482],12);
- L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'}).addTo(map);
+ map=L.map('map',{zoomControl:false,minZoom:1,maxZoom:19}).setView([-27.5949,-48.5482],12);
+ if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',loadBasemap,{once:true});
+ }else{
+  loadBasemap();
+ }
  L.control.zoom({position:'topleft'}).addTo(map);
  // Markers represent places: sum their event weights instead of counting markers.
  cluster=L.markerClusterGroup?L.markerClusterGroup({maxClusterRadius:55,showCoverageOnHover:false,iconCreateFunction:layer=>L.divIcon({html:`<span>${clusterEventCount(layer.getAllChildMarkers())}</span>`,className:'cluster-icon',iconSize:L.point(46,46)})}):L.layerGroup();

@@ -43,9 +43,11 @@ def test_acceptance_scenarios(tmp_path, mobile):
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.route('**/invalid.example/**', lambda route: route.abort())
-        page.route('**/tile.openstreetmap.org/**', lambda route: route.abort())
+        page.route('**/tiles.openfreemap.org/styles/liberty', lambda route: route.fulfill(
+            status=403, headers={'Access-Control-Allow-Origin': '*'}))
         page.goto(file.as_uri(), wait_until='networkidle')
         page.wait_for_function('window.L && typeof cluster !== "undefined" && cluster !== null', timeout=30000)
+        page.locator('#basemapStatus').wait_for(state='visible')
         assert page.locator('#counts').inner_text() == '7 eventos · 3 lugares'
         assert page.evaluate('cluster.getLayers().length') == 3
         # 1: Single marker, no badge, opens its single event.

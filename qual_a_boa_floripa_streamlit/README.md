@@ -196,7 +196,8 @@ de Trusted Domains no portal HERE. Durante o processamento, a HERE só é
 consultada quando há eventos com localização pendente.
 
 O WebMap abre diretamente no navegador, sem servidor ou framework frontend.
-OpenStreetMap Standard é a base inicial. Leaflet, MarkerCluster, fontes e tiles
+OpenFreeMap Liberty, com dados do OpenStreetMap, é a base inicial. Leaflet,
+MarkerCluster, MapLibre, fontes e mapas-base
 precisam de internet. CSS, JavaScript e eventos estão embutidos no único HTML.
 O painel Streamlit existente continua sendo apenas a interface de processamento.
 
