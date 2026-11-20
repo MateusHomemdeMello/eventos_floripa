@@ -80,6 +80,22 @@ def test_extracted_table_groups_only_within_sao_paulo_analysis_day():
     assert public[0]['instagram_urls'] == [first, second, third]
 
 
+def test_reviewed_occurrence_retains_both_sources_and_preferred_schedule():
+    common = {'data_inicio': '2099-01-01', 'data_analise_ia': '2026-11-20T14:00:00-03:00',
+              '_event_index': 0, 'ocorrencia_revisada': 'primary:0'}
+    frame = pd.DataFrame([
+        {**common, '_post_id': 'other', 'evento': 'Nome alternativo', 'horario_inicio': '12:00',
+         'url_post': 'https://www.instagram.com/p/other/'},
+        {**common, '_post_id': 'primary', 'evento': 'Nome escolhido', 'horario_inicio': '11:00',
+         'url_post': 'https://www.instagram.com/p/primary/'},
+    ])
+    daily = consolidate_extractions(frame)
+    assert list(daily['horario_inicio']) == ['11:00']
+    published, = events_for_webgis(frame, date(2099, 1, 1))
+    assert published['hora_inicio'] == '11:00'
+    assert len(published['instagram_urls']) == 2
+
+
 def test_legacy_records_are_filtered_and_conflicting_campus_pin_is_removed():
     frame = pd.DataFrame([
         {'evento': 'Rematrícula para alunos veteranos do Sesc'},

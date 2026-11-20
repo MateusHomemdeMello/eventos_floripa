@@ -12,6 +12,9 @@ from pathlib import Path
 import pandas as pd
 from app.services.event_identity import campus_pin_conflicts
 
+# Posts com muitos eventos podem carregar uma lista grande de candidatos HERE.
+csv.field_size_limit(max(csv.field_size_limit(), 16 * 1024 * 1024))
+
 
 def post_key(row):
     shortcode = row.get('shortcode')
@@ -106,11 +109,14 @@ class PostHistory:
 
     def checkpoint(self, key):
         """Persist one API result before starting the next request."""
+        self.checkpoint_many([key])
+
+    def checkpoint_many(self, keys):
         self.prepare_database()
         with closing(sqlite3.connect(self.database_path)) as db, db:
-            db.execute('INSERT INTO posts VALUES (?, ?) ON CONFLICT(post_id) '
-                       'DO UPDATE SET payload=excluded.payload',
-                       self._database_row(key, self.entries[key]))
+            db.executemany('INSERT INTO posts VALUES (?, ?) ON CONFLICT(post_id) '
+                           'DO UPDATE SET payload=excluded.payload',
+                           (self._database_row(key, self.entries[key]) for key in keys))
             db.execute("UPDATE csv_export SET signature = 'pending'")
         self._csv_dirty = True
 

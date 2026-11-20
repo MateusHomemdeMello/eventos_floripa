@@ -8,3 +8,4 @@ __pycache__/
 **/data/falhas_extracao.json
 **/data/falhas_localizacao.json
 **/data/posts_coletados.json
+**/data/backups/importacao-*/

@@ -11,6 +11,7 @@ from app.services.ai_service import extract_events
 from app.services.geocoding_service import geocode_events
 from app.services.export_service import consolidate_extractions, export_all
 from app.services.history_service import PostHistory, post_key, records
+from app.services.location_validation import latest_location_plan
 from app.services.survey_service import STAGE_FILES, append_survey, stage_time, with_dates
 from app.utils.atomic_file import write_text
 
@@ -230,28 +231,42 @@ class PipelineController:
 
     def location_stage(self, status=None, progress=None, on_saved=None):
         with PostHistory.transaction(self.history_path) as history:
-            pending,references=history.pending()
+            pending, references, conflicts, day = latest_location_plan(history)
+            if status and day:
+                status(f'Validando os locais da extração de {day:%d/%m/%Y} com as fontes disponíveis...')
             if pending.empty:
-                if status: status('Não há localizações pendentes.')
+                if status: status(f'Nenhuma consulta HERE a executar. {len(conflicts)} ocorrências em revisão.')
+                self._try_output(self.location_failures_path,
+                                 lambda: self._save_frame(self.location_failures_path, conflicts))
                 self._sync_surveys(history)
-                return history.frames()[2],pd.DataFrame()
-            if status: status(f'{len(pending)} eventos pendentes. Consultando HERE...')
+                return history.frames()[2],conflicts
+            if status: status(f'{len(pending)} ocorrências pendentes na extração selecionada. Consultando HERE...')
             history.prepare_database()
             saved_indices = set()
+            if not conflicts.empty:
+                self._try_output(self.location_failures_path,
+                                 lambda: self._save_frame(self.location_failures_path, conflicts))
 
             def persist(index,result,error):
+                refs, links = references[index]
                 if result is None:
                     self._record_failure(self.location_failures_path,
-                                         {'indice_evento': index, 'url_post': pending.loc[index].get('url_post'), 'erro': error})
+                                         {'indice_evento': index, 'url_post': pending.loc[index].get('url_post'),
+                                          'urls_publicacoes': links, 'erro': error})
                     return
-                key,event_index=references[index]
                 saved = dict(result)
                 saved.pop('_source_index', None)
-                saved={**history.entries[key]['events'][int(event_index)],**saved}
-                saved['data_geolocalizacao']=stage_time()
-                history.entries[key]['final'][event_index]=saved
-                history.entries[key]['updated_at']=datetime.now(timezone.utc).isoformat()
-                history.checkpoint(key)
+                if len(links) > 1 or len(refs) > 1:
+                    for field in pending.columns:
+                        saved.pop(field, None)
+                    saved['fontes_localizacao'] = links
+                stamp = stage_time()
+                for key, event_index in refs:
+                    entry = history.entries[key]
+                    entry['final'][event_index] = {**entry['events'][int(event_index)], **saved,
+                                                   'data_geolocalizacao': stamp}
+                    entry['updated_at'] = datetime.now(timezone.utc).isoformat()
+                history.checkpoint_many(dict.fromkeys(key for key, _ in refs))
                 saved_indices.add(index)
                 if on_saved and index % 20 == 0:
                     on_saved(history.frames()[2])
@@ -263,6 +278,12 @@ class PipelineController:
                     if index in failed_indices or index in saved_indices: continue
                     saved=records(pd.DataFrame([row]))[0]
                     persist(index, saved, None)
+                if 'indice_evento' in failures:
+                    failures['urls_publicacoes'] = failures['indice_evento'].map(
+                        {index: links for index, (_, links) in enumerate(references)}
+                    )
+                if not conflicts.empty:
+                    failures = pd.concat([conflicts, failures], ignore_index=True)
                 self._try_output(self.location_failures_path,
                                  lambda: self._save_frame(self.location_failures_path, failures))
             finally:

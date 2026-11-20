@@ -52,15 +52,18 @@ def normalized_category(value, event_name="", description=""):
     return next((name for name,terms in rules if any(term in text for term in terms)), "encontros")
 
 
+def analysis_day(value):
+    stamp = pd.to_datetime(value, errors='coerce')
+    if pd.isna(stamp):
+        return None
+    return (stamp.tz_convert('America/Sao_Paulo') if stamp.tzinfo else stamp).date()
+
+
 def consolidate_extractions(frame):
     """Validate the extracted table by analysis day in São Paulo."""
     candidates = []
     for ordinal, (_, row) in enumerate(frame.iterrows()):
-        stamp = pd.to_datetime(row.get('data_analise_ia'), errors='coerce')
-        day = None
-        if pd.notna(stamp):
-            local_stamp = stamp.tz_convert('America/Sao_Paulo') if stamp.tzinfo else stamp
-            day = local_stamp.date()
+        day = analysis_day(row.get('data_analise_ia'))
         start = date_iso(row.get('data_inicio'))
         candidates.append({
             'row': row.to_dict(), 'ordinal': ordinal, 'analysis_day': day, 'data_inicio': start,
@@ -69,19 +72,26 @@ def consolidate_extractions(frame):
             'identity': publication_identity(row, campus_venue(row) or row.get('local_informado'),
                                              row.get('endereco_informado'), row.get('bairro_informado'), ''),
             'instagram_url': text_value(row.get('url_post')),
+            'reviewed': text_value(row.get('ocorrencia_revisada')),
+            'preferred': text_value(row.get('ocorrencia_revisada')) == occurrence_id(row),
         })
     dated = [event for event in candidates if event['analysis_day'] and event['data_inicio']]
     groups = group_occurrences(dated, by_analysis_day=True)
     groups.extend([event] for event in candidates if not event['analysis_day'] or not event['data_inicio'])
     groups.sort(key=lambda group: group[0]['ordinal'])
     return pd.DataFrame([
-        {**group[0]['row'], 'urls_publicacoes': source_links(group)} for group in groups
+        {**max(group, key=lambda event: event['preferred'])['row'],
+         'urls_publicacoes': source_links(group)} for group in groups
     ], columns=[*frame.columns, 'urls_publicacoes'])
 
 
 def source_links(group):
     return list(dict.fromkeys(event['instagram_url'] for event in group if event['instagram_url']))
 
+
+def occurrence_id(row):
+    post = text_value(row.get('_post_id'))
+    return f"{post}:{text_value(row.get('_event_index'), '0')}" if post else None
 def events_for_webgis(df, today=None):
     reference = today or datetime.now(ZoneInfo('America/Sao_Paulo'))
     if isinstance(reference, datetime):
@@ -104,8 +114,7 @@ def events_for_webgis(df, today=None):
         try: eid=int(r.get("id"))
         except (TypeError, ValueError, OverflowError): eid=ordinal
         # History identity is stable even if rows are reordered between exports.
-        if text_value(r.get('_post_id')):
-            eid=f"{text_value(r.get('_post_id'))}:{text_value(r.get('_event_index'),'0')}"
+        eid = occurrence_id(r) or eid
         h1=hhmm(r.get("horario_inicio")); h2=hhmm(r.get("horario_fim"))
         if isinstance(reference, datetime) and end == today.isoformat() and h2 and h2 <= reference.strftime('%H:%M'):
             continue
@@ -125,14 +134,16 @@ def events_for_webgis(df, today=None):
             'descricao': text_value(r.get('descricao')), 'lat': lat, 'lng': lng,
             'instagram_url': text_value(r.get('url_post')), 'foto': text_value(r.get('foto_url')),
             'identity': publication_identity(r, local, address, district, here_id),
-            'quality': (lat is not None, bool(h1), bool(h2), bool(text_value(r.get('foto_url'))),
+            'reviewed': text_value(r.get('ocorrencia_revisada')),
+            'quality': (text_value(r.get('ocorrencia_revisada')) == eid, lat is not None,
+                        bool(h1), bool(h2), bool(text_value(r.get('foto_url'))),
                         finite(r.get('confianca_extracao')) or 0),
         }
         candidates.append(event)
     out = []
     for group in group_occurrences(candidates):
         best = max(group, key=lambda event: event['quality'])
-        published = {key: value for key, value in best.items() if key not in {'identity', 'quality'}}
+        published = {key: value for key, value in best.items() if key not in {'identity', 'quality', 'reviewed'}}
         published['id'] = group[0]['id']
         published['instagram_urls'] = source_links(group)
         out.append(published)

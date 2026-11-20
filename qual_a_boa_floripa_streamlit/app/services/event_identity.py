@@ -98,18 +98,38 @@ def publication_identity(row, local, address, district, here_id):
     }
 
 
-def group_occurrences(events, *, by_analysis_day=False):
+def group_occurrences(events, *, by_analysis_day=False, matches=same_occurrence):
+    def day(event):
+        return event.get('analysis_day') if by_analysis_day else None
+
+    def dates(event):
+        return day(event), event['data_inicio'], event['data_fim']
+
+    reviewed_groups = defaultdict(list)
     buckets = defaultdict(list)
-    groups = []
     for event in events:
-        day = event.get('analysis_day') if by_analysis_day else None
-        key = (day, event['data_inicio'], event['data_fim'])
-        for group in buckets[key]:
-            if all(same_occurrence(event, member) for member in group):
-                group.append(event)
-                break
-        else:
-            group = [event]
+        if event.get('reviewed'):
+            reviewed_groups[(day(event), event['reviewed'])].append(event)
+    for group in reviewed_groups.values():
+        for key in {dates(event) for event in group}:
             buckets[key].append(group)
+
+    groups = []
+    displayed = set()
+    for event in events:
+        reviewed = event.get('reviewed')
+        if reviewed:
+            group = reviewed_groups[(day(event), reviewed)]
+        else:
+            key = dates(event)
+            for group in buckets[key]:
+                if all(matches(event, member) for member in group):
+                    group.append(event)
+                    break
+            else:
+                group = [event]
+                buckets[key].append(group)
+        if id(group) not in displayed:
+            displayed.add(id(group))
             groups.append(group)
     return groups

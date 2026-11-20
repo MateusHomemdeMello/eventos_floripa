@@ -169,6 +169,12 @@ Horários, responsáveis ou locais conflitantes mantêm as ocorrências separada
 O WebGIS também reúne anúncios analisados em dias diferentes e inclui todos os
 links de origem no detalhe e no compartilhamento do evento.
 
+Antes da HERE, a localização considera apenas o dia de análise mais recente
+com eventos, no fuso de São Paulo. Uma ocorrência com várias fontes gera uma
+consulta usando o local ou o endereço mais específico quando as informações
+são compatíveis. Divergências ficam nas falhas de localização para revisão.
+Em bancos antigos sem nenhuma data de análise, a etapa usa o conjunto legado.
+
 A agenda é voltada a atividades culturais, esportivas e de lazer. Prazos
 administrativos, como rematrículas, e manifestações de finalidade religiosa,
 como a Marcha para Jesus, ficam fora da publicação. A localização exige evidência
