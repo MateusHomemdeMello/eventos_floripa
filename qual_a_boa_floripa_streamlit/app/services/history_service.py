@@ -40,6 +40,7 @@ class PostHistory:
         self.path = path
         self.entries = {}
         if path.exists():
+            reader = None
             try:
                 with path.open(encoding='utf-8-sig', newline='') as source:
                     reader = csv.DictReader(source)
@@ -57,8 +58,11 @@ class PostHistory:
                         if not set(final).issubset({str(i) for i in range(len(events))}):
                             raise ValueError('Índices inválidos')
                         self.entries[key] = {'post': post, 'events': events, 'final': final, 'updated_at': row['updated_at']}
-            except (ValueError, KeyError, TypeError, csv.Error):
-                raise RuntimeError('O banco CSV está inválido. Restaure uma cópia válida antes de processar; o arquivo foi preservado.') from None
+            except (ValueError, KeyError, TypeError, csv.Error) as exc:
+                line = f' (linha {reader.line_num})' if reader and reader.line_num else ''
+                raise RuntimeError(
+                    f'O banco CSV está inválido. Arquivo preservado: {path}{line}. Motivo: {exc}.'
+                ) from exc
 
     @classmethod
     @contextmanager
