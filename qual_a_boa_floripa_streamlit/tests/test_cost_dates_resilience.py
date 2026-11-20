@@ -25,6 +25,27 @@ def test_static_prefix_and_duplicate_images(monkeypatch):
     assert download.call_count == 2
 
 
+def test_unavailable_images_without_caption_skip_the_paid_request(monkeypatch):
+    client = Mock()
+    monkeypatch.setattr(ai, 'image_to_data_url', Mock(side_effect=OSError('offline')))
+    with pytest.raises(RuntimeError, match='Análise pendente'):
+        ai.interpret_post(client, {'data_publicacao': '2026-09-01',
+                                  'imagens': ['photo']}, AppConfig())
+    client.responses.create.assert_not_called()
+
+
+def test_local_write_failure_stops_before_the_next_gpt_request(monkeypatch):
+    interpret = Mock(return_value=([], ''))
+    persist = Mock(side_effect=OSError('disk full'))
+    monkeypatch.setattr(ai, 'OpenAI', Mock())
+    monkeypatch.setattr(ai, 'interpret_post', interpret)
+    posts = pd.DataFrame([{'shortcode': 'A'}, {'shortcode': 'B'}])
+    with pytest.raises(OSError, match='disk full'):
+        ai.extract_events('test', posts, AppConfig(), on_result=persist)
+    interpret.assert_called_once()
+    persist.assert_called_once()
+
+
 @pytest.mark.parametrize('status', [429, 500, 503])
 def test_here_transient_retry(monkeypatch, status):
     good = Mock(status_code=200, ok=True)

@@ -44,7 +44,8 @@ def render(root: Path):
                 st.session_state.pop('downloads',None)
             st.session_state['history_loaded']=True
             st.session_state['saved_state_signature']=controller.saved_state_signature()
-        except (RuntimeError,OSError) as exc:
+            st.session_state['output_warnings'] = controller.output_warnings
+        except (RuntimeError,OSError,ValueError) as exc:
             st.error(f'Não foi possível carregar o histórico: {exc}')
             st.stop()
     with st.sidebar:
@@ -82,9 +83,11 @@ def render(root: Path):
             except RuntimeError as exc: st.error(str(exc))
     tab1,tab2,tab3=st.tabs(["Processamento","Resultados","WebGIS"])
     with tab1:
-        st.caption('Os dataframes salvos são carregados automaticamente ao abrir a ferramenta. Processar executa apenas as etapas pendentes.')
+        st.caption('Os dataframes salvos são carregados automaticamente ao abrir a ferramenta. Use Retomar após uma interrupção para aproveitar os resultados já gravados.')
         st.info("As chaves são usadas nesta sessão e incluídas no JSON quando você exporta as configurações.")
-        start=st.button("Executar processamento completo",type="primary",use_container_width=True)
+        full_col, resume_col = st.columns(2)
+        start=full_col.button("Nova coleta e processamento",type="primary",use_container_width=True)
+        resume=resume_col.button("Retomar processamento",use_container_width=True)
         st.caption('Ou execute uma etapa por vez. Cada etapa reaproveita o resultado persistido da anterior.')
         step_cols=st.columns(4)
         collect_only=step_cols[0].button('1. Coletar',use_container_width=True)
@@ -103,18 +106,23 @@ def render(root: Path):
         def publish(name, frame):
             stages[name]=frame
             slots[name].dataframe(frame,use_container_width=True)
-        action=next((name for name,pressed in [('full',start),('collect',collect_only),('extract',extract_only),('locate',locate_only),('export',export_only)] if pressed),None)
+        action=next((name for name,pressed in [('full',start),('resume',resume),('collect',collect_only),('extract',extract_only),('locate',locate_only),('export',export_only)] if pressed),None)
         if action:
-            missing=(action=='full' and not all([openai,apify,here])) or (action=='collect' and not apify) or (action=='extract' and not openai) or (action=='locate' and (not here or (config.use_web_fallback and not openai)))
+            apify_pending = controller.apify_run_path.exists()
+            missing=(action=='resume' and apify_pending and not apify) or (action=='full' and not all([openai,apify,here])) or (action=='collect' and not apify) or (action=='extract' and not openai) or (action=='locate' and (not here or (config.use_web_fallback and not openai)))
             if missing: st.error('Informe as credenciais necessárias para esta etapa.')
-            elif action in {'full','collect'} and not config.profiles: st.error("Informe pelo menos um perfil.")
+            elif action in {'full','collect'} and not config.profiles and not apify_pending: st.error("Informe pelo menos um perfil.")
             else:
               controller=PipelineController(config,Secrets(openai,apify,here),root)
               try:
-                if action=='full':
-                    result=controller.run(status=status.info,progress=lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)),on_stage=publish)
+                if action in {'full','resume'}:
+                    result=controller.run(status=status.info,progress=lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)),on_stage=publish,resume=action=='resume')
                     st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
-                    st.session_state['result']=result; bar.progress(1.0); status.success("Processamento concluído.")
+                    st.session_state['result']=result; bar.progress(1.0)
+                    if result.extraction_failures.empty and result.location_failures.empty:
+                        status.success('Processamento concluído.')
+                    else:
+                        status.warning(f'Resultados salvos. Pendências: {len(result.extraction_failures)} na extração e {len(result.location_failures)} na localização.')
                 elif action=='collect': publish('posts',controller.collect_stage(status.info))
                 elif action=='extract':
                     posts,events,failures=controller.extraction_stage(status=status.info,progress=lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)),on_saved=lambda frame:publish('events',frame))
@@ -122,35 +130,55 @@ def render(root: Path):
                     result=controller.export_stage(posts,extraction_failures=failures,status=status.info)
                     st.session_state['result']=result
                     st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
-                    status.success('Extração salva e resultados atualizados.')
+                    if failures.empty:
+                        status.success('Extração salva e resultados atualizados.')
+                    else:
+                        status.warning(f'Extração salva com {len(failures)} posts pendentes.')
                 elif action=='locate':
                     final,failures=controller.location_stage(status.info,lambda value,msg:(bar.progress(min(max(value,0.0),1.0)),status.info(msg)),lambda frame:publish('final',frame))
                     publish('final',final)
                     result=controller.export_stage(location_failures=failures,status=status.info)
                     st.session_state['result']=result
                     st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
-                    status.success('Localizações salvas e publicações atualizadas.')
+                    if failures.empty:
+                        status.success('Localizações salvas e publicações atualizadas.')
+                    else:
+                        status.warning(f'Localizações salvas com {len(failures)} eventos pendentes.')
                 elif action=='export':
                     result=controller.export_stage(status=status.info)
                     st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
                     st.session_state['result']=result; status.success('Exportação concluída.')
               except HereAuthenticationError as exc: status.error(str(exc))
-              except Exception as exc: status.error(f"Falha: {exc}"); st.exception(exc)
+              except Exception as exc:
+                  status.error(f'Processamento interrompido: {exc}. Use Retomar processamento para continuar.')
+              finally:
+                  st.session_state['output_warnings'] = controller.output_warnings
+        for warning in st.session_state.get('output_warnings', []):
+            st.warning(warning)
         st.subheader('Histórico dos levantamentos em CSV')
         st.caption('Arquivos cumulativos: novas coletas e novos resultados são acrescentados. Datas e horas usam o fuso de São Paulo. Datas antigas desconhecidas ficam em branco.')
         survey_paths=PipelineController(config,Secrets(openai,apify,here),root).survey_paths
         for column,(stage,label) in zip(st.columns(3),[('posts','1. Scraping CSV'),('events','2. Análise IA CSV'),('final','3. Geolocalização CSV')]):
             path=survey_paths[stage]
             if path.exists():
-                column.download_button(label,path.read_bytes(),file_name=path.name,mime='text/csv',key='survey_'+stage)
+                try:
+                    column.download_button(label,path.read_bytes(),file_name=path.name,mime='text/csv',key='survey_'+stage)
+                except OSError as exc:
+                    column.warning(f'CSV indisponível para download: {exc}')
     result=st.session_state.get('result')
     if result and 'downloads' not in st.session_state:
         st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
     if result:
-        st.session_state['downloads'][result.webgis_path.name]=render_webgis(result.final,root/'assets/webgis_template.html').encode('utf-8')
+        try:
+            st.session_state['downloads'][result.webgis_path.name]=render_webgis(result.final,root/'assets/webgis_template.html').encode('utf-8')
+        except (OSError, RuntimeError, ValueError) as exc:
+            st.warning(f'WebGIS anterior disponível. Falha ao atualizar o mapa: {exc}')
     with tab2:
         if history_path.exists():
-            st.download_button('Baixar banco de posts CSV',history_path.read_bytes(),file_name=history_path.name,mime='text/csv')
+            try:
+                st.download_button('Baixar banco de posts CSV',history_path.read_bytes(),file_name=history_path.name,mime='text/csv')
+            except OSError as exc:
+                st.warning(f'CSV indisponível para download: {exc}')
         if not result:
             saved=st.session_state.get('stages',{})
             if saved:

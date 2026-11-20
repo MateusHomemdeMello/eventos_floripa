@@ -11,13 +11,17 @@ class HereAuthenticationError(RuntimeError):
     pass
 
 
+class HereUnavailableError(RuntimeError):
+    pass
+
+
 def request_here(url, parameters, key, timeout=30):
     for attempt in range(3):
         try:
             return _request_here_once(url, parameters, key, timeout)
         except (HereTemporaryError, requests.RequestException):
             if attempt == 2:
-                raise RuntimeError('HERE indisponível após 3 tentativas (rede, limite de consultas ou servidor). Tente novamente a etapa de localização.') from None
+                raise HereUnavailableError('HERE indisponível após 3 tentativas (rede, limite de consultas ou servidor). Tente novamente a etapa de localização.') from None
             time.sleep(2 ** attempt)
 
 
@@ -55,7 +59,7 @@ def validate_here_key(key, config):
 
 def configure(api_key, openai_key, config):
     global HERE_API_KEY, openai_client, MODELO_IA, CIDADE_REFERENCIA, ESTADO_REFERENCIA, PAIS_REFERENCIA, CODIGO_PAIS, CENTRO_REFERENCIA, RAIO_MAXIMO_KM, HERE_LIMITE_CANDIDATOS, HERE_IDIOMA, HERE_TIMEOUT, CONFIANCA_MINIMA_LOCALIZACAO, DIFERENCA_MINIMA_CANDIDATOS, USAR_BUSCA_WEB_FALLBACK
-    HERE_API_KEY=api_key; openai_client=OpenAI(api_key=openai_key) if config.use_web_fallback else None; MODELO_IA=config.ai_model
+    HERE_API_KEY=api_key; openai_client=OpenAI(api_key=openai_key, timeout=90.0) if config.use_web_fallback else None; MODELO_IA=config.ai_model
     CIDADE_REFERENCIA=config.reference_city; ESTADO_REFERENCIA=config.reference_state; PAIS_REFERENCIA=config.reference_country; CODIGO_PAIS=config.country_code
     CENTRO_REFERENCIA=(config.reference_lat,config.reference_lon); RAIO_MAXIMO_KM=config.max_radius_km
     HERE_LIMITE_CANDIDATOS=config.here_candidate_limit; HERE_IDIOMA=config.here_language; HERE_TIMEOUT=config.here_timeout
@@ -1091,6 +1095,14 @@ def geocode_events(events: pd.DataFrame, here_key: str, openai_key: str, config,
     for n,(idx,event) in enumerate(events.iterrows(),1):
         try:
             result=localizar_evento(event)
+        except (HereAuthenticationError, HereUnavailableError) as exc:
+            if on_result:
+                on_result(idx, None, str(exc))
+            raise
+        except Exception as exc:
+            failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":repr(exc)})
+            if on_result: on_result(idx,None,repr(exc))
+        else:
             if result:
                 result["_source_index"]=idx; located.append(result)
                 if on_result: on_result(idx,result,None)
@@ -1098,13 +1110,6 @@ def geocode_events(events: pd.DataFrame, here_key: str, openai_key: str, config,
                 error="Localização sem resultado; nova tentativa pendente."
                 failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":error})
                 if on_result: on_result(idx,None,error)
-        except HereAuthenticationError:
-            if on_result:
-                on_result(idx, None, 'HERE: acesso recusado; confira a API key e as permissões de Geocoding & Search.')
-            raise
-        except Exception as exc:
-            failures.append({"indice_evento":idx,"url_post":event.get("url_post"),"erro":repr(exc)})
-            if on_result: on_result(idx,None,repr(exc))
         if progress: progress(n/total, f"Geocodificando eventos: {n}/{len(events)}")
     geo=pd.DataFrame(located)
     base=events.assign(id=range(1,len(events)+1)).copy()

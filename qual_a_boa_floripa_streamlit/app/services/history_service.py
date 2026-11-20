@@ -3,8 +3,9 @@ import csv
 import json
 import os
 import re
+import sqlite3
 import tempfile
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -39,6 +40,14 @@ class PostHistory:
     def __init__(self, path: Path):
         self.path = path
         self.entries = {}
+        self._csv_dirty = False
+        if self.database_path.exists():
+            with closing(sqlite3.connect(self.database_path)) as db:
+                self.entries = {key: json.loads(payload) for key, payload in
+                                db.execute('SELECT post_id, payload FROM posts ORDER BY rowid')}
+                exported = db.execute('SELECT signature FROM csv_export').fetchone()[0]
+            self._csv_dirty = exported != self._csv_signature()
+            return
         if path.exists():
             reader = None
             try:
@@ -63,6 +72,53 @@ class PostHistory:
                 raise RuntimeError(
                     f'O banco CSV está inválido. Arquivo preservado: {path}{line}. Motivo: {exc}.'
                 ) from exc
+
+    @property
+    def database_path(self):
+        return self.path.with_suffix('.sqlite3')
+
+    def _csv_signature(self):
+        try:
+            stat = self.path.stat()
+            return f'{stat.st_mtime_ns}:{stat.st_size}'
+        except FileNotFoundError:
+            return ''
+
+    @staticmethod
+    def _database_row(key, entry):
+        return key, json.dumps(entry, ensure_ascii=False, allow_nan=False, default=json_default)
+
+    def prepare_database(self):
+        """Import the existing CSV before making the first paid request."""
+        if not self.database_path.exists():
+            import_database = self.database_path.with_suffix('.import')
+            with closing(sqlite3.connect(import_database)) as db, db:
+                db.execute('CREATE TABLE IF NOT EXISTS posts (post_id TEXT PRIMARY KEY, payload TEXT NOT NULL)')
+                db.execute('CREATE TABLE IF NOT EXISTS csv_export (signature TEXT)')
+                db.execute('DELETE FROM posts')
+                db.execute('DELETE FROM csv_export')
+                db.execute("INSERT INTO csv_export VALUES ('pending')")
+                db.executemany('INSERT INTO posts VALUES (?, ?)',
+                               (self._database_row(k, v) for k, v in self.entries.items()))
+            os.replace(import_database, self.database_path)
+            self._csv_dirty = True
+
+    def checkpoint(self, key):
+        """Persist one API result before starting the next request."""
+        self.prepare_database()
+        with closing(sqlite3.connect(self.database_path)) as db, db:
+            db.execute('INSERT INTO posts VALUES (?, ?) ON CONFLICT(post_id) '
+                       'DO UPDATE SET payload=excluded.payload',
+                       self._database_row(key, self.entries[key]))
+            db.execute("UPDATE csv_export SET signature = 'pending'")
+        self._csv_dirty = True
+
+    def sync_csv(self):
+        if self._csv_dirty:
+            self._write_csv()
+            with closing(sqlite3.connect(self.database_path)) as db, db:
+                db.execute('UPDATE csv_export SET signature = ?', (self._csv_signature(),))
+            self._csv_dirty = False
 
     @classmethod
     @contextmanager
@@ -105,6 +161,18 @@ class PostHistory:
         entry['updated_at']=datetime.now(timezone.utc).isoformat()
 
     def save(self):
+        if self.database_path.exists():
+            with closing(sqlite3.connect(self.database_path)) as db, db:
+                db.executemany('INSERT INTO posts VALUES (?, ?) ON CONFLICT(post_id) '
+                               'DO UPDATE SET payload=excluded.payload',
+                               (self._database_row(k, v) for k, v in self.entries.items()))
+                db.execute("UPDATE csv_export SET signature = 'pending'")
+            self._csv_dirty = True
+            self.sync_csv()
+        else:
+            self._write_csv()
+
+    def _write_csv(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
         try:
@@ -155,7 +223,7 @@ class PostHistory:
 
     def migrate_export(self, path):
         """Recover extracted events from the old output, but never infer no-event posts."""
-        if self.path.exists() or not path.exists(): return
+        if self.entries or self.path.exists() or self.database_path.exists() or not path.exists(): return
         try:
             frame = pd.read_csv(path)
         except pd.errors.EmptyDataError:

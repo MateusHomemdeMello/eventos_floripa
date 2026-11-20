@@ -139,7 +139,7 @@ import base64, io, json, time
 import pandas as pd
 import requests
 from PIL import Image
-from openai import OpenAI
+from openai import AuthenticationError, OpenAI, PermissionDeniedError, RateLimitError
 
 def image_to_data_url(url: str, config) -> str:
     r=requests.get(url,headers={"User-Agent":"Mozilla/5.0","Referer":"https://www.instagram.com/"},timeout=30)
@@ -169,16 +169,29 @@ EXTRACTION_INSTRUCTIONS += '\nHORÁRIOS: preencha início e fim somente quando e
 
 def interpret_post(client: OpenAI, post, config):
     published=pd.Timestamp(post["data_publicacao"])
-    prompt=f"Data da publicação: {published.strftime('%Y-%m-%d')}\nPerfil: @{post.get('perfil') or ''}\nLEGENDA:\n{post.get('legenda') or ''}"
+    caption = post.get("legenda")
+    caption = caption if isinstance(caption, str) else ""
+    images = post.get("imagens")
+    images = images if isinstance(images, list) else []
+    prompt=f"Data da publicação: {published.strftime('%Y-%m-%d')}\nPerfil: @{post.get('perfil') or ''}\nLEGENDA:\n{caption}"
     content=[{"type":"input_text","text":prompt}]; errors=[]
-    for i,url in enumerate(list(dict.fromkeys(post.get("imagens") or []))[:config.max_images_per_post],1):
+    for i,url in enumerate(list(dict.fromkeys(images))[:config.max_images_per_post],1):
         try: content.append({"type":"input_image","image_url":image_to_data_url(url,config),"detail":"high"})
         except Exception as exc: errors.append(f"imagem {i}: {type(exc).__name__}")
+    if errors and len(content) == 1 and not caption.strip():
+        raise RuntimeError('Imagens indisponíveis e post sem legenda. Análise pendente.')
     response=client.responses.create(model=config.ai_model,input=[{"role":"system","content":EXTRACTION_INSTRUCTIONS},{"role":"user","content":content}],text={"format":EVENTOS_SCHEMA},max_output_tokens=4000,store=False)
-    return json.loads(response.output_text).get("eventos",[]), "; ".join(errors)
+    if getattr(response, 'status', 'completed') != 'completed':
+        raise RuntimeError('A resposta do GPT foi interrompida ou incompleta.')
+    found = json.loads(response.output_text)['eventos']
+    if not isinstance(found, list) or any(not isinstance(event, dict) for event in found):
+        raise ValueError('O GPT retornou uma lista de eventos inválida.')
+    if not found and errors:
+        raise RuntimeError('A análise não encontrou eventos e há imagens indisponíveis. Post pendente para nova tentativa.')
+    return found, "; ".join(errors)
 
 def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None, on_result=None):
-    client=OpenAI(api_key=api_key); events=[]; failures=[]; total=max(len(posts),1)
+    client=OpenAI(api_key=api_key, timeout=90.0); events=[]; failures=[]; total=max(len(posts),1)
     for n,(idx,post) in enumerate(posts.iterrows(),1):
         try:
             found,img_errors=interpret_post(client,post,config)
@@ -187,11 +200,16 @@ def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None, on_
             for event in found:
                 event.update({"perfil":post.get("perfil"),"data_publicacao":post.get("data_publicacao"),"url_post":post.get("url_post"),"shortcode":post.get("shortcode"),"foto_url":photo_url,"erros_imagem":img_errors or None})
                 events.append(event)
-            if on_result: on_result(idx,post,found,None)
         except Exception as exc:
             error=repr(exc)
             failures.append({"indice_post":idx,"url_post":post.get("url_post"),"erro":error})
             if on_result: on_result(idx,post,None,error)
+            if isinstance(exc, (AuthenticationError, PermissionDeniedError)) or (
+                isinstance(exc, RateLimitError) and exc.code == 'insufficient_quota'
+            ):
+                raise RuntimeError('OpenAI recusou a execução. Confira as credenciais e o saldo antes de retomar.') from exc
+        else:
+            if on_result: on_result(idx,post,found,None)
         if progress: progress(n/total, f"Interpretando posts: {n}/{len(posts)}")
         time.sleep(config.ai_interval_seconds)
     cols=["evento","categoria","data_inicio","data_fim","horario_inicio","horario_fim","local_informado","endereco_informado","bairro_informado","referencia_local","descricao","confianca_extracao","observacoes","perfil","data_publicacao","url_post","shortcode","foto_url","erros_imagem"]

@@ -116,12 +116,20 @@ HTTP 401/403 interrompe a etapa com orientação sobre credenciais e permissões
 Falhas na busca web preservam candidatos HERE já encontrados para revisão.
 Com busca web desativada, a etapa HERE não exige chave OpenAI.
 
-### Banco CSV e atualização incremental
+### Gravação e retomada
 
-O banco `data/banco_posts.csv` é carregado ao abrir o aplicativo. Cada linha
-identifica um post pelo shortcode do Instagram e guarda o estado do processamento,
-a data de atualização e os resultados em colunas JSON (um post pode ter vários eventos).
-O arquivo é criado pela ferramenta e pode ser baixado na aba Resultados.
+Use **Retomar processamento** após uma interrupção. O aplicativo reaproveita o
+lote da Apify quando o identificador da execução já foi gravado, processa os
+posts e eventos pendentes e tenta atualizar as exportações. **Nova coleta e
+processamento** inicia outro lote quando não há uma execução Apify em aberto.
+Os lotes ficam em `data/coletas/`, inclusive quando outra coleta é iniciada
+antes de analisar todos os posts.
+
+Cada resposta concluída do GPT e da HERE é gravada em `data/banco_posts.sqlite3`
+antes da próxima consulta. O banco importa o histórico de `data/banco_posts.csv`
+na primeira análise ou localização. A aba Resultados continua oferecendo o CSV
+para download. Se o Excel bloquear um CSV, feche o arquivo e use **4. Exportar**
+para tentar atualizar as cópias sem chamar as APIs.
 
 Após a coleta, a coluna `ja_analisado` mostra os posts reconhecidos no banco.
 GPT é chamado somente para posts ainda não analisados, inclusive quando análises
@@ -130,10 +138,11 @@ Resultados GPT são salvos antes da localização; uma falha na HERE permite ten
 novamente apenas a localização pendente. Localizações concluídas são reutilizadas.
 Posts editados com o mesmo shortcode continuam usando a análise armazenada.
 
-Eventos novos são acrescentados ao histórico, sem remover eventos de coletas
-anteriores. A gravação substitui o CSV de forma atômica e um bloqueio impede dois
-processamentos simultâneos sobre o mesmo banco. Um banco inválido interrompe o
-processamento sem sobrescrever o arquivo. Guarde cópias de segurança desse CSV.
+Um bloqueio impede dois processamentos simultâneos sobre o mesmo banco. Os
+arquivos de exportação são substituídos de forma atômica. Guarde cópias da pasta
+`data/`, incluindo o SQLite e os lotes. A recuperação depende da persistência
+dessa pasta no ambiente que hospeda o aplicativo. Se houver interrupção entre
+a resposta do provedor e a gravação local, aquela consulta pode precisar ser repetida.
 
 Na primeira abertura, se o banco ainda não existir, a ferramenta aproveita
 `data/output/eventos_processados.csv` (ou sua cópia arquivada em

@@ -1,0 +1,10 @@
+__pycache__/
+.pytest_cache/
+.pipeline-test-*/
+**/data/coletas/
+**/data/apify_coleta_pendente.json
+**/data/banco_posts.sqlite3*
+**/data/banco_posts.import*
+**/data/falhas_extracao.json
+**/data/falhas_localizacao.json
+**/data/posts_coletados.json

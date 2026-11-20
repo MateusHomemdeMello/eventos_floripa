@@ -94,7 +94,9 @@ def render_webgis(df, template_path: Path):
 
 
 def generate_webgis(df, template_path: Path, output_path: Path):
-    output_path.write_text(render_webgis(df,template_path),encoding='utf-8')
+    from app.utils.atomic_file import write_text
+
+    write_text(output_path, render_webgis(df, template_path))
     return len(events_for_webgis(df))
 
 def export_all(final, posts, extraction_failures, location_failures, output_dir: Path, template_path: Path):

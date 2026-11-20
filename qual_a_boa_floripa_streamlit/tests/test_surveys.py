@@ -124,7 +124,78 @@ def test_collection_append_failure_recovered_before_next_collection(controller):
             raise OSError('CSV temporarily locked')
         return append_survey(path,stage,frame)
     with patch('app.controllers.pipeline_controller.collect_posts',return_value=collection('A')) as scraper, patch('app.controllers.pipeline_controller.append_survey',side_effect=interrupted):
-        with pytest.raises(OSError): controller.collect_stage()
+        controller.collect_stage()
+        assert any('CSV temporarily locked' in warning for warning in controller.output_warnings)
         scraper.return_value=collection('B')
         controller.collect_stage()
     assert list(read(controller,'posts').shortcode)==['A','B']
+
+
+def test_locked_csvs_and_interruption_do_not_repeat_paid_extraction(controller, monkeypatch):
+    import os
+
+    original_replace = os.replace
+    locked = {controller.history_path, controller.survey_paths['events']}
+
+    def replace(source, target):
+        if Path(target) in locked:
+            raise PermissionError('CSV aberto no Excel')
+        return original_replace(source, target)
+
+    def interrupted(_, frame, config, progress, persist):
+        post = frame.iloc[0]
+        persist(0, post, [{'evento': 'Show A', 'shortcode': 'A'}], None)
+        raise RuntimeError('interrupted')
+
+    with patch('app.controllers.pipeline_controller.collect_posts', return_value=collection('A', 'B')) as scraper, patch('app.controllers.pipeline_controller.extract_events', side_effect=interrupted) as ai, patch('app.controllers.pipeline_controller.geocode_events', side_effect=locate):
+        controller.collect_stage()
+        first_csv = controller.survey_paths['events'].read_bytes()
+        monkeypatch.setattr(os, 'replace', replace)
+        with pytest.raises(RuntimeError, match='interrupted'):
+            controller.extraction_stage()
+        assert controller.survey_paths['events'].read_bytes() == first_csv
+        restarted = PipelineController(controller.config, controller.secrets, controller.root)
+        stages, _ = restarted.restore_state()
+        assert list(stages['events'].shortcode) == ['A']
+        assert any('CSV aberto no Excel' in warning for warning in restarted.output_warnings)
+        locked.clear()
+        ai.side_effect = extract
+        result = restarted.run(resume=True)
+        assert list(ai.call_args.args[1].shortcode) == ['B']
+        assert scraper.call_count == 1
+        assert set(result.final.shortcode) == {'A', 'B'}
+        assert set(read(restarted, 'events').shortcode) == {'A', 'B'}
+        restarted.history_path.unlink()
+        restarted.restore_state()
+        assert set(pd.read_csv(restarted.history_path).post_id) == {'A', 'B'}
+
+
+def test_new_collection_keeps_unprocessed_posts_from_previous_batch(controller):
+    with patch('app.controllers.pipeline_controller.collect_posts', side_effect=[collection('A'), collection('B')]), patch('app.controllers.pipeline_controller.extract_events', side_effect=extract) as ai:
+        controller.collect_stage()
+        controller.collect_stage()
+        controller.extraction_stage()
+    assert set(ai.call_args.args[1].shortcode) == {'A', 'B'}
+
+
+def test_apify_download_retry_reuses_the_saved_run(controller):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    client = Mock()
+    client.actor.return_value.start.return_value = SimpleNamespace(id='run-1')
+    client.run.return_value.wait_for_finish.return_value = SimpleNamespace(
+        status='SUCCEEDED', default_dataset_id='dataset-1', started_at='2026-09-24T12:00:00Z')
+    client.dataset.return_value.iterate_items.side_effect = [
+        OSError('network interrupted'),
+        iter([{'shortCode': 'A', 'timestamp': '2026-09-24T10:00:00Z'}]),
+    ]
+    with patch('app.services.instagram_service.ApifyClient', return_value=client):
+        with pytest.raises(OSError, match='network interrupted'):
+            controller.collect_stage()
+        assert controller.apify_run_path.exists()
+        restarted = PipelineController(controller.config, controller.secrets, controller.root)
+        assert list(restarted.collect_stage().shortcode) == ['A']
+    client.actor.return_value.start.assert_called_once()
+    assert [call.args for call in client.run.call_args_list] == [('run-1',), ('run-1',)]
+    assert not restarted.apify_run_path.exists()
