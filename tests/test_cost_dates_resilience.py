@@ -34,6 +34,17 @@ def test_unavailable_images_without_caption_skip_the_paid_request(monkeypatch):
     client.responses.create.assert_not_called()
 
 
+def test_extraction_filters_ineligible_records_in_a_mixed_post():
+    client = Mock()
+    client.responses.create.return_value = SimpleNamespace(
+        output_text='{"eventos": [{"evento": "Sesc anuncia rematrículas"}, '
+                    '{"evento": "Marcha para Jesus", "categoria": "esportes"}, '
+                    '{"evento": "Festival de Curtas", "responsavel_evento": "Cineclube"}]}'
+    )
+    events, _ = ai.interpret_post(client, {'data_publicacao': '2026-11-20'}, AppConfig())
+    assert events == [{'evento': 'Festival de Curtas', 'responsavel_evento': 'Cineclube'}]
+
+
 def test_local_write_failure_stops_before_the_next_gpt_request(monkeypatch):
     interpret = Mock(return_value=([], ''))
     persist = Mock(side_effect=OSError('disk full'))
@@ -71,6 +82,30 @@ def test_here_does_not_require_openai_without_fallback(monkeypatch):
     monkeypatch.setattr(geo, 'OpenAI', client)
     geo.configure('here', '', AppConfig(use_web_fallback=False))
     client.assert_not_called()
+
+
+def test_here_requires_cce_evidence_even_with_perfect_geographic_score(monkeypatch):
+    geo.configure('here', '', AppConfig(use_web_fallback=False))
+    event = {'local_informado': 'Trindade', 'bairro_informado': 'Trindade',
+             'descricao': 'Sessão no CCE da UFSC.'}
+    queries = []
+
+    def discover(query):
+        queries.append(query)
+        address = {'city': 'Florianópolis', 'district': 'Trindade'}
+        return [
+            {'id': 'bank', 'title': 'Caixa Econômica Federal', 'position': {'lat': -27.59, 'lng': -48.54},
+             'address': address, 'scoring': {'queryScore': 1}},
+            {'id': 'cce', 'title': 'Centro de Comunicação e Expressão', 'position': {'lat': -27.60, 'lng': -48.52},
+             'address': address, 'scoring': {'queryScore': 0.8}},
+        ]
+
+    monkeypatch.setattr(geo, 'pesquisar_here_discover', discover)
+    assert geo.localizar_evento(event)['here_id'] == 'cce'
+    assert any('CCE da UFSC' in query for query in queries)
+    monkeypatch.setattr(geo, 'pesquisar_here_discover', lambda query: discover(query)[:1])
+    unresolved = geo.localizar_evento(event)
+    assert unresolved['necessita_revisao'] and unresolved['latitude'] is None
 
 
 def test_expired_events_only_removed_from_view():

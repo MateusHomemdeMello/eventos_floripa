@@ -8,6 +8,19 @@ from app.models.config import AppConfig, Secrets
 from app.services.history_service import PostHistory
 
 
+def test_saved_cce_pin_conflict_is_requeued_for_location(tmp_path):
+    history = PostHistory(tmp_path / 'banco.csv')
+    event = {'evento': 'Mostra', 'descricao': 'Sessão no CCE da UFSC'}
+    history.add_extraction('A', {}, [event])
+    history.entries['A']['final']['0'] = {
+        **event, 'local_padronizado': 'Caixa Econômica Federal', 'latitude': -27.6, 'longitude': -48.5,
+    }
+    assert history.pending()[1] == [('A', '0')]
+    assert history.frames()[2].iloc[0]['necessita_revisao']
+    history.entries['A']['final']['0']['local_padronizado'] = 'Centro de Comunicação e Expressão'
+    assert history.pending()[1] == []
+
+
 def test_history_serializes_dates_in_all_payloads(tmp_path):
     timestamp=pd.Timestamp('2026-09-24T11:22:33.123456789-03:00')
     history=PostHistory(tmp_path/'history.csv')

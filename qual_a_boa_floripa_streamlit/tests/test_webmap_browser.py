@@ -31,6 +31,8 @@ def test_acceptance_scenarios(tmp_path, mobile):
                      'endereco_informado': 'Rua ' + venue + ', 10', 'bairro_informado': 'Trindade',
                      'latitude': -27.59 + (ord(venue) - 65) * .0002, 'longitude': -48.54,
                      'foto_url': 'https://invalid.example/missing.jpg'})
+    rows[-1]['url_post'] = 'https://www.instagram.com/p/source-a/'
+    rows.append({**rows[-1], 'id': 8, 'url_post': 'https://www.instagram.com/p/source-b/'})
     file = tmp_path / 'qual_a_boa_floripa.html'
     file.write_text(render_webgis(pd.DataFrame(rows), TEMPLATE), encoding='utf-8')
     with playwright.sync_playwright() as p:
@@ -50,6 +52,8 @@ def test_acceptance_scenarios(tmp_path, mobile):
         assert page.evaluate("placeIcon(places[2]).options.html.includes('<b>')") is False
         page.evaluate('cluster.getLayers().find(m=>m.options.eventCount===1).fire("click")')
         assert page.locator('#detailTitle').inner_text() == 'Evento 7'
+        assert page.locator('#detail .original').all_text_contents() == ['Publicação 1', 'Publicação 2']
+        assert page.locator('#detail .original').last.get_attribute('href').endswith('/source-b/')
         assert page.locator('.dot').count() == 0
         page.locator('#closeDetail').click()
         # 2: Four events at one address, one marker and four carousel slides.
@@ -78,8 +82,15 @@ def test_acceptance_scenarios(tmp_path, mobile):
         page.evaluate('map.setView([-27.59,-48.54], 10, {animate:false})')
         page.wait_for_function("document.querySelector('.cluster-icon')?.textContent==='7'")
         # 4/5: Three saved events, two at A. All components use the same subset.
+        cards = '#agendaList' if mobile else '#placeList'
+        random_button = page.locator('#mobileRandom' if mobile else '#random')
+        if mobile:
+            assert page.locator('#sheet').is_hidden()
+            page.locator('#agendaTab').click()
         for event_id in ['1', '2', '5']:
-            page.locator(f'#placeList [data-favorite="{event_id}"]').click()
+            page.locator(f'{cards} [data-favorite="{event_id}"]').click()
+        if mobile:
+            page.locator('#mapTab').click()
         page.locator('#favoriteFilter').click()
         assert page.locator('#counts').inner_text() == '3 eventos · 2 lugares'
         assert page.locator('#placeList .card').count() == page.locator('#agendaList .card').count() == 3
@@ -94,7 +105,7 @@ def test_acceptance_scenarios(tmp_path, mobile):
         page.locator('[data-quick="fim"]').click()
         page.locator('[data-category="musica"]').click()
         assert page.locator('#counts').inner_text() == '1 eventos · 1 lugares'
-        page.locator('#random').click()
+        random_button.click()
         assert page.locator('#detailTitle').inner_text() == 'Evento 5'
         page.locator('#closeDetail').click()
         # 7/8: Search matches neighborhood and accent-normalized category.
@@ -104,7 +115,7 @@ def test_acceptance_scenarios(tmp_path, mobile):
             assert page.locator('#placeList .card').count() == 1
         page.locator('#search').fill('no match')
         page.wait_for_timeout(180)
-        assert page.locator('#random').is_disabled()
+        assert random_button.is_disabled()
         page.locator('#search').fill('')
         page.locator('#favoriteFilter').click()
         page.locator('[data-category="todos"]').click()
@@ -133,7 +144,7 @@ def test_acceptance_scenarios(tmp_path, mobile):
         page.locator('#closeDetail').click()
         page.evaluate('() => { window.originalRandom=Math.random; Math.random=()=>0.3; }')
         expected = page.evaluate('filtered[Math.floor(filtered.length * 0.3)].nome')
-        page.locator('#random').click()
+        random_button.click()
         assert page.locator('#detailTitle').inner_text() == expected
         page.evaluate('() => { Math.random=window.originalRandom; }')
         # Native sharing and clipboard fallback both receive the event's details.
@@ -159,8 +170,9 @@ def test_acceptance_scenarios(tmp_path, mobile):
         assert page.locator('#sheet').is_hidden()
         page.locator('#mapTab').click()
         if mobile:
-            page.locator('#sheetToggle').click()
-            assert page.locator('#sheetToggle').get_attribute('aria-expanded') == 'true'
+            assert page.locator('#sheet').is_hidden()
+            assert page.locator('#mobileRandom').is_visible()
+            assert page.locator('.leaflet-bottom').first.evaluate("(node) => parseFloat(getComputedStyle(node).bottom) < 25")
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         # Storage survives a reload, and the actual generated file opens via file://.
         page.reload(wait_until='networkidle')

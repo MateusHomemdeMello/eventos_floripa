@@ -9,7 +9,7 @@ from app.models.results import PipelineResult
 from app.services.instagram_service import ApifyCollectionFailed, collect_posts
 from app.services.ai_service import extract_events
 from app.services.geocoding_service import geocode_events
-from app.services.export_service import export_all
+from app.services.export_service import consolidate_extractions, export_all
 from app.services.history_service import PostHistory, post_key, records
 from app.services.survey_service import STAGE_FILES, append_survey, stage_time, with_dates
 from app.utils.atomic_file import write_text
@@ -64,7 +64,7 @@ class PipelineController:
                 signatures.append((str(path), stat.st_mtime_ns, stat.st_size))
             except FileNotFoundError:
                 signatures.append((str(path), None, None))
-        return str(self.root.resolve()), 'autoload-v3', tuple(signatures)
+        return str(self.root.resolve()), 'autoload-v4', tuple(signatures)
 
     def _sync_surveys(self, history):
         self._try_output(self.history_path, history.sync_csv)
@@ -223,8 +223,10 @@ class PipelineController:
                 self._sync_surveys(history)
                 failures = self._load_failures(self.extraction_failures_path)
             _,events,_=history.frames()
-        if status: status(f'Extração concluída: {len(events)} eventos no banco.')
-        return posts,events,failures
+        if status: status('Validando a tabela de extração por dia...')
+        validated = consolidate_extractions(events)
+        if status: status(f'Extração concluída: {len(validated)} ocorrências após a validação diária.')
+        return posts,validated,failures
 
     def location_stage(self, status=None, progress=None, on_saved=None):
         with PostHistory.transaction(self.history_path) as history:
@@ -235,6 +237,7 @@ class PipelineController:
                 return history.frames()[2],pd.DataFrame()
             if status: status(f'{len(pending)} eventos pendentes. Consultando HERE...')
             history.prepare_database()
+            saved_indices = set()
 
             def persist(index,result,error):
                 if result is None:
@@ -249,6 +252,7 @@ class PipelineController:
                 history.entries[key]['final'][event_index]=saved
                 history.entries[key]['updated_at']=datetime.now(timezone.utc).isoformat()
                 history.checkpoint(key)
+                saved_indices.add(index)
                 if on_saved and index % 20 == 0:
                     on_saved(history.frames()[2])
 
@@ -256,15 +260,9 @@ class PipelineController:
                 located,failures=geocode_events(pending,self.secrets.here_api_key,self.secrets.openai_api_key,self.config,progress,persist)
                 failed_indices=set(failures.get('indice_evento',[]))
                 for index,row in located.iterrows():
-                    if index in failed_indices: continue
-                    key,event_index=references[index]
-                    if event_index in history.entries[key]['final']: continue
+                    if index in failed_indices or index in saved_indices: continue
                     saved=records(pd.DataFrame([row]))[0]
-                    saved={**history.entries[key]['events'][int(event_index)],**saved}
-                    saved['data_geolocalizacao']=stage_time()
-                    history.entries[key]['final'][event_index]=saved
-                    history.entries[key]['updated_at']=datetime.now(timezone.utc).isoformat()
-                    history.checkpoint(key)
+                    persist(index, saved, None)
                 self._try_output(self.location_failures_path,
                                  lambda: self._save_frame(self.location_failures_path, failures))
             finally:
@@ -285,7 +283,7 @@ class PipelineController:
         location_failures=location_failures if location_failures is not None else self._load_failures(self.location_failures_path)
         if status: status('Gerando WebMap em um único HTML...')
         webgis=export_all(final,posts,extraction_failures,location_failures,self.root/'data/output',self.root/'assets/webgis_template.html')
-        return PipelineResult(posts,events,final,extraction_failures,location_failures,webgis)
+        return PipelineResult(posts,consolidate_extractions(events),final,extraction_failures,location_failures,webgis)
 
     def restore_state(self):
         with PostHistory.transaction(self.history_path) as history:
@@ -301,7 +299,7 @@ class PipelineController:
         except FileNotFoundError: collected=saved_posts
         stages={}
         if not collected.empty: stages['posts']=collected
-        if not events.empty: stages['events']=events
+        if not events.empty: stages['events']=consolidate_extractions(events)
         if not final.empty: stages['final']=final
         result = (self._try_output(self.root/'data/output/qual_a_boa_floripa.html',
                                    lambda: self.export_stage(collected))
@@ -316,7 +314,7 @@ class PipelineController:
                     self.output_warnings.append(f'{path.name}: {exc}')
                     continue
                 if not frame.empty:
-                    stages[stage]=frame
+                    stages[stage]=consolidate_extractions(frame) if stage == 'events' else frame
         return stages,result
 
     def set_publication(self, changes):

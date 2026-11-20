@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from app.services.event_identity import campus_venue, group_occurrences, matches_campus_venue, outside_agenda, publication_identity
 
 def text_value(value, default=""):
     if value is None or not pd.api.types.is_scalar(value): return default
@@ -50,18 +51,49 @@ def normalized_category(value, event_name="", description=""):
     )
     return next((name for name,terms in rules if any(term in text for term in terms)), "encontros")
 
+
+def consolidate_extractions(frame):
+    """Validate the extracted table by analysis day in São Paulo."""
+    candidates = []
+    for ordinal, (_, row) in enumerate(frame.iterrows()):
+        stamp = pd.to_datetime(row.get('data_analise_ia'), errors='coerce')
+        day = None
+        if pd.notna(stamp):
+            local_stamp = stamp.tz_convert('America/Sao_Paulo') if stamp.tzinfo else stamp
+            day = local_stamp.date()
+        start = date_iso(row.get('data_inicio'))
+        candidates.append({
+            'row': row.to_dict(), 'ordinal': ordinal, 'analysis_day': day, 'data_inicio': start,
+            'data_fim': date_iso(row.get('data_fim')) or start,
+            'hora_inicio': hhmm(row.get('horario_inicio')), 'hora_fim': hhmm(row.get('horario_fim')),
+            'identity': publication_identity(row, campus_venue(row) or row.get('local_informado'),
+                                             row.get('endereco_informado'), row.get('bairro_informado'), ''),
+            'instagram_url': text_value(row.get('url_post')),
+        })
+    dated = [event for event in candidates if event['analysis_day'] and event['data_inicio']]
+    groups = group_occurrences(dated, by_analysis_day=True)
+    groups.extend([event] for event in candidates if not event['analysis_day'] or not event['data_inicio'])
+    groups.sort(key=lambda group: group[0]['ordinal'])
+    return pd.DataFrame([
+        {**group[0]['row'], 'urls_publicacoes': source_links(group)} for group in groups
+    ], columns=[*frame.columns, 'urls_publicacoes'])
+
+
+def source_links(group):
+    return list(dict.fromkeys(event['instagram_url'] for event in group if event['instagram_url']))
+
 def events_for_webgis(df, today=None):
     reference = today or datetime.now(ZoneInfo('America/Sao_Paulo'))
     if isinstance(reference, datetime):
         reference = reference.astimezone(ZoneInfo('America/Sao_Paulo')) if reference.tzinfo else reference.replace(tzinfo=ZoneInfo('America/Sao_Paulo'))
     today = reference.date() if isinstance(reference, datetime) else reference
-    out=[]
-    if df.empty: return out
-    for _,r in df.iterrows():
+    candidates = []
+    for ordinal, (_, r) in enumerate(df.iterrows(), start=1):
         publish=r.get("publicar_webgis",True)
         if isinstance(publish,str):
             if publish.strip().lower() in {"false","0","não","nao"}: continue
         elif not pd.isna(publish) and not bool(publish): continue
+        if outside_agenda(r.get('evento')): continue
         lat,lng=finite(r.get("latitude")),finite(r.get("longitude")); start=date_iso(r.get("data_inicio"))
         if not start: continue
         if lat is None or lng is None or not(-90<=lat<=90) or not(-180<=lng<=180):
@@ -70,14 +102,40 @@ def events_for_webgis(df, today=None):
         if end < start or end < today.isoformat(): continue
         cat=normalized_category(r.get("categoria"),r.get("evento"),r.get("descricao"))
         try: eid=int(r.get("id"))
-        except Exception: eid=len(out)+1
+        except (TypeError, ValueError, OverflowError): eid=ordinal
         # History identity is stable even if rows are reordered between exports.
         if text_value(r.get('_post_id')):
             eid=f"{text_value(r.get('_post_id'))}:{text_value(r.get('_event_index'),'0')}"
         h1=hhmm(r.get("horario_inicio")); h2=hhmm(r.get("horario_fim"))
         if isinstance(reference, datetime) and end == today.isoformat() and h2 and h2 <= reference.strftime('%H:%M'):
             continue
-        out.append({"id":eid,"nome":text_value(r.get("evento"),"Evento sem nome"),"categoria":cat,"data_inicio":start,"data_fim":date_iso(r.get("data_fim")) or start,"hora_inicio":h1 or None,"hora_fim":h2 or None,"local":text_value(r.get("local_padronizado")) or text_value(r.get("local_informado")) or "Local não informado","endereco":text_value(r.get("endereco")) or text_value(r.get("endereco_informado")),"bairro":text_value(r.get("bairro")) or text_value(r.get("bairro_informado")),"descricao":text_value(r.get("descricao")),"lat":lat,"lng":lng,"instagram_url":text_value(r.get("url_post")),"foto":text_value(r.get("foto_url"))})
+        standardized = text_value(r.get('local_padronizado'))
+        resolved_address = text_value(r.get('endereco'))
+        explicit_campus = campus_venue(r)
+        here_id = text_value(r.get('here_id'))
+        if explicit_campus and not matches_campus_venue(standardized, resolved_address):
+            lat, lng, standardized, resolved_address, here_id = None, None, '', '', ''
+        local = standardized or explicit_campus or text_value(r.get('local_informado')) or 'Local não informado'
+        address = resolved_address or text_value(r.get('endereco_informado'))
+        district = text_value(r.get('bairro')) or text_value(r.get('bairro_informado'))
+        event = {
+            'id': eid, 'nome': text_value(r.get('evento'), 'Evento sem nome'), 'categoria': cat,
+            'data_inicio': start, 'data_fim': end, 'hora_inicio': h1 or None, 'hora_fim': h2 or None,
+            'local': local, 'endereco': address, 'bairro': district,
+            'descricao': text_value(r.get('descricao')), 'lat': lat, 'lng': lng,
+            'instagram_url': text_value(r.get('url_post')), 'foto': text_value(r.get('foto_url')),
+            'identity': publication_identity(r, local, address, district, here_id),
+            'quality': (lat is not None, bool(h1), bool(h2), bool(text_value(r.get('foto_url'))),
+                        finite(r.get('confianca_extracao')) or 0),
+        }
+        candidates.append(event)
+    out = []
+    for group in group_occurrences(candidates):
+        best = max(group, key=lambda event: event['quality'])
+        published = {key: value for key, value in best.items() if key not in {'identity', 'quality'}}
+        published['id'] = group[0]['id']
+        published['instagram_urls'] = source_links(group)
+        out.append(published)
     return out
 
 def render_webgis(df, template_path: Path):

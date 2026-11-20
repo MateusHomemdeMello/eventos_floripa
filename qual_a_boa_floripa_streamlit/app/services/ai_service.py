@@ -13,6 +13,9 @@ EVENTOS_SCHEMA = {
                         "evento": {
                             "type": "string"
                         },
+                        "responsavel_evento": {
+                            "type": ["string", "null"]
+                        },
 
                         "categoria": {
                             "type": "string",
@@ -106,6 +109,7 @@ EVENTOS_SCHEMA = {
 
                     "required": [
                         "evento",
+                        "responsavel_evento",
                         "categoria",
                         "data_inicio",
                         "data_fim",
@@ -140,6 +144,7 @@ import pandas as pd
 import requests
 from PIL import Image
 from openai import AuthenticationError, OpenAI, PermissionDeniedError, RateLimitError
+from app.services.event_identity import outside_agenda
 
 def image_to_data_url(url: str, config) -> str:
     r=requests.get(url,headers={"User-Agent":"Mozilla/5.0","Referer":"https://www.instagram.com/"},timeout=30)
@@ -165,6 +170,11 @@ EXTRACTION_INSTRUCTIONS += '''\nCATEGORIA: escolha exatamente uma categoria pelo
  - encontros: palestras, seminários, debates, rodas de conversa, congressos e outros eventos voltados à troca de conhecimento, experiências ou discussão de temas.
 Em eventos híbridos, classifique pela atividade central anunciada, não apenas por uma atração secundária. Use festivais para programação ampla e diversa; festivais musicais pequenos permanecem em musica.'''
 EXTRACTION_INSTRUCTIONS += '\nHORÁRIOS: preencha início e fim somente quando explicitamente informados no post ou nas imagens. Se faltar um deles, retorne null nesse campo. Nunca estime duração, copie o início para o fim ou use meia-noite/23:59 como substitutos. Não use horário da publicação, de abertura do estabelecimento ou de outro evento.'
+EXTRACTION_INSTRUCTIONS += """
+ESCOPO: publique apenas atividades culturais, esportivas ou de lazer concretas. Ignore comunicados administrativos, matrículas, rematrículas, inscrições ou venda de ingressos quando o post anuncia somente o prazo, sem uma atividade concreta com data própria. Uma rematrícula para veteranos do Sesc não é um evento. Cultos, missas e manifestações de finalidade religiosa, como Marcha para Jesus, ficam fora da agenda. Caminhar em uma procissão ou marcha religiosa não é esporte. Em um post misto, extraia somente as atividades elegíveis.
+IDENTIDADE: use o título próprio da atividade, sem chamadas promocionais, e mantenha informações que distinguem sessões, edições, artistas ou atrações. Preencha responsavel_evento com artista, grupo ou organização efetivamente responsável quando identificado. O perfil que compartilhou o post não é evidência de responsabilidade. Preserve datas e horários de sessões diferentes.
+LOCAL: procure o espaço nos detalhes e na descrição do post e nas imagens. Preserve nomes de unidades, siglas e instituição associada. Por exemplo, registre 'CCE da UFSC' como local, e 'Trindade' como bairro se explicitamente indicado. Um bairro, uma referência próxima ou o endereço da entidade divulgadora não substitui o local.
+"""
 
 
 def interpret_post(client: OpenAI, post, config):
@@ -188,7 +198,7 @@ def interpret_post(client: OpenAI, post, config):
         raise ValueError('O GPT retornou uma lista de eventos inválida.')
     if not found and errors:
         raise RuntimeError('A análise não encontrou eventos e há imagens indisponíveis. Post pendente para nova tentativa.')
-    return found, "; ".join(errors)
+    return [event for event in found if not outside_agenda(event.get('evento'))], "; ".join(errors)
 
 def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None, on_result=None):
     client=OpenAI(api_key=api_key, timeout=90.0); events=[]; failures=[]; total=max(len(posts),1)
@@ -212,5 +222,5 @@ def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None, on_
             if on_result: on_result(idx,post,found,None)
         if progress: progress(n/total, f"Interpretando posts: {n}/{len(posts)}")
         time.sleep(config.ai_interval_seconds)
-    cols=["evento","categoria","data_inicio","data_fim","horario_inicio","horario_fim","local_informado","endereco_informado","bairro_informado","referencia_local","descricao","confianca_extracao","observacoes","perfil","data_publicacao","url_post","shortcode","foto_url","erros_imagem"]
+    cols=["evento","responsavel_evento","categoria","data_inicio","data_fim","horario_inicio","horario_fim","local_informado","endereco_informado","bairro_informado","referencia_local","descricao","confianca_extracao","observacoes","perfil","data_publicacao","url_post","shortcode","foto_url","erros_imagem"]
     return pd.DataFrame(events,columns=cols), pd.DataFrame(failures)

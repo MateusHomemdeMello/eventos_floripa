@@ -157,6 +157,25 @@ permanecem; datas de início inválidas e intervalos invertidos ficam fora do ma
 e agenda. Eventos sem coordenadas aparecem na agenda/lista, sem marcador.
 Eventos encerrados continuam no banco para evitar reanálises.
 
+Após a extração, a tabela validada agrupa as ocorrências pelo dia da análise
+em São Paulo. Cada ocorrência reúne os links das publicações que a anunciaram.
+O botão **Baixar tabela validada por dia** exporta essa tabela com os links.
+O levantamento cumulativo da IA conserva os registros de origem.
+
+O mapa e a agenda publicam um registro por ocorrência quando data e local
+coincidem e o título, o responsável e os horários disponíveis sustentam a
+correspondência. Perfis divulgadores diferentes podem anunciar o mesmo evento.
+Horários, responsáveis ou locais conflitantes mantêm as ocorrências separadas.
+O WebGIS também reúne anúncios analisados em dias diferentes e inclui todos os
+links de origem no detalhe e no compartilhamento do evento.
+
+A agenda é voltada a atividades culturais, esportivas e de lazer. Prazos
+administrativos, como rematrículas, e manifestações de finalidade religiosa,
+como a Marcha para Jesus, ficam fora da publicação. A localização exige evidência
+do espaço ou do endereço. Se os dados do CCE da UFSC contradisserem um ponto
+salvo, o mapa deixa de usar esse ponto e a etapa de localização permite consultá-lo
+novamente.
+
 Na barra lateral, use **Importar configurações JSON** para selecionar um arquivo
 ou colar JSON e clicar em **Aplicar JSON**. **Exportar configurações JSON** salva
 todos os parâmetros de `AppConfig`, inclusive os avançados, e as chaves

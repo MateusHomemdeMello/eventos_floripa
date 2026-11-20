@@ -3,6 +3,21 @@ from difflib import SequenceMatcher
 import pandas as pd
 import requests
 from openai import OpenAI
+from app.services.event_identity import campus_venue, matches_campus_venue, normalized
+
+GENERIC_VENUE_WORDS = {'de', 'da', 'do', 'das', 'dos', 'e', 'centro', 'teatro', 'espaco',
+                       'cultural', 'shopping', 'praca', 'sala', 'auditorio', 'unidade'}
+
+
+def compatible_venue(expected, candidate):
+    expected, candidate = normalized(expected), normalized(candidate)
+    expected = expected.replace('universidade federal de santa catarina', 'ufsc')
+    candidate = candidate.replace('universidade federal de santa catarina', 'ufsc')
+    if expected == candidate:
+        return True
+    known = {word for word in expected.split() if len(word) >= 3 and not word.isdigit()} - GENERIC_VENUE_WORDS
+    found = set(candidate.split())
+    return bool(known and len(known & found) >= min(len(known), 2))
 
 HERE_DISCOVER_URL="https://discover.search.hereapi.com/v1/discover"
 HERE_GEOCODE_URL="https://geocode.search.hereapi.com/v1/geocode"
@@ -440,6 +455,8 @@ def avaliar_candidato_here(
     Padroniza e calcula a confiança de um
     candidato retornado pela HERE.
     """
+    if item.get('resultType') in {'locality', 'administrativeArea', 'postalCodePoint', 'street', 'intersection'}:
+        return None
     posicao = item.get(
         "position",
         {}
@@ -511,11 +528,28 @@ def avaliar_candidato_here(
         evento.get("endereco_informado")
     )
 
+    campus = campus_venue(evento)
+    if campus and not matches_campus_venue(nome_here, endereco_formatado):
+        return None
+
+    explicit_name = texto_valido(evento.get('local_informado'))
+    matches_address = False
+    if explicit_name and not campus:
+        # Exact address evidence may identify a building number. A differently
+        # named point of interest is still a conflicting venue.
+        number = normalized(texto_valido(endereco_here.get('houseNumber')))
+        street = normalized(endereco_here.get('street'))
+        supplied = f' {normalized(endereco_informado)} '
+        matches_address = (item.get('resultType') == 'houseNumber' and number and street
+                           and f' {number} ' in supplied and f' {street} ' in supplied)
+        if not compatible_venue(explicit_name, nome_here) and not matches_address:
+            return None
+
     bairro_informado = texto_valido(
         evento.get("bairro_informado")
     )
 
-    score_nome = similaridade_textual(
+    score_nome = 1.0 if campus else similaridade_textual(
         local_informado,
         nome_here
     )
@@ -578,7 +612,7 @@ def avaliar_candidato_here(
             extrair_categoria_here(item)
         ),
 
-        "local_padronizado": nome_here,
+        "local_padronizado": explicit_name if matches_address else nome_here,
 
         "endereco": endereco_formatado,
 
@@ -652,6 +686,10 @@ def buscar_candidatos_here(
     Executa consultas no Discover e, quando existe
     endereço, também no Geocode.
     """
+    venue = normalized(evento.get('local_informado'))
+    district = normalized(evento.get('bairro_informado'))
+    if (not venue or venue == district) and not texto_valido(evento.get('endereco_informado')):
+        return []
     consultas = montar_consultas_here(
         evento
     )
@@ -936,6 +974,10 @@ def localizar_evento(
     Localiza o evento com a HERE e utiliza
     pesquisa web apenas como fallback.
     """
+    campus = campus_venue(evento)
+    if campus:
+        evento = {**evento, 'local_informado': campus}
+
     candidatos = buscar_candidatos_here(
         evento
     )
@@ -1048,6 +1090,17 @@ def localizar_evento(
     candidatos_fallback = buscar_candidatos_here(
         evento_fallback
     )
+
+    if campus:
+        candidatos_fallback = [
+            candidate for candidate in candidatos_fallback
+            if matches_campus_venue(candidate.get('local_padronizado'), candidate.get('endereco'))
+        ]
+    elif texto_valido(evento.get('local_informado')):
+        candidatos_fallback = [
+            candidate for candidate in candidatos_fallback
+            if compatible_venue(evento.get('local_informado'), candidate.get('local_padronizado'))
+        ]
 
     melhor_fallback = selecionar_melhor_candidato(
         candidatos_fallback

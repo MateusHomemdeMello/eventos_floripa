@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import streamlit as st
 import streamlit.components.v1 as components
 from app.models.config import AppConfig, Secrets
@@ -155,6 +156,13 @@ def render(root: Path):
                   st.session_state['output_warnings'] = controller.output_warnings
         for warning in st.session_state.get('output_warnings', []):
             st.warning(warning)
+        validated = stages.get('events')
+        if validated is not None and not validated.empty and 'urls_publicacoes' in validated:
+            csv = validated.assign(urls_publicacoes=validated['urls_publicacoes'].map(
+                lambda urls: json.dumps(urls, ensure_ascii=False)
+            )).to_csv(index=False)
+            st.download_button('Baixar tabela validada por dia', csv.encode('utf-8-sig'),
+                               file_name='eventos_validados.csv', mime='text/csv')
         st.subheader('Histórico dos levantamentos em CSV')
         st.caption('Arquivos cumulativos: novas coletas e novos resultados são acrescentados. Datas e horas usam o fuso de São Paulo. Datas antigas desconhecidas ficam em branco.')
         survey_paths=PipelineController(config,Secrets(openai,apify,here),root).survey_paths

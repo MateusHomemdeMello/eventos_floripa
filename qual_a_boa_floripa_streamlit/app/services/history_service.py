@@ -10,6 +10,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+from app.services.event_identity import campus_pin_conflicts
 
 
 def post_key(row):
@@ -208,6 +209,8 @@ class PostHistory:
                 row['_event_index']=index
                 if str(index) not in entry['final']:
                     row.update(necessita_revisao=True, motivo_revisao='Localização pendente')
+                elif campus_pin_conflicts(event, row):
+                    row.update(necessita_revisao=True, motivo_revisao='Localização incompatível com o CCE da UFSC')
                 final.append(row)
         output = pd.DataFrame(final)
         output['id'] = range(1, len(output)+1)
@@ -217,7 +220,7 @@ class PostHistory:
         rows, references = [], []
         for key, entry in self.entries.items():
             for index, event in enumerate(entry['events']):
-                if str(index) not in entry['final']:
+                if str(index) not in entry['final'] or campus_pin_conflicts(event, entry['final'][str(index)]):
                     rows.append(event); references.append((key, str(index)))
         return pd.DataFrame(rows), references
 
