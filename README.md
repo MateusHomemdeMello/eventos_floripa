@@ -195,10 +195,11 @@ HTTP 401/403 exige conferir a chave, o acesso a Geocoding & Search e as restriç
 de Trusted Domains no portal HERE. Durante o processamento, a HERE só é
 consultada quando há eventos com localização pendente.
 
-O WebMap abre diretamente no navegador, sem servidor ou framework frontend.
-OpenFreeMap Liberty, com dados do OpenStreetMap, é a base inicial. Leaflet,
-MarkerCluster, MapLibre, fontes e mapas-base
-precisam de internet. CSS, JavaScript e eventos estão embutidos no único HTML.
+O WebMap mantém os marcadores na aba Mapa e as listas na aba Agenda.
+O mapa-base padrão do OpenStreetMap precisa de internet e de uma página servida
+por HTTP ou HTTPS. No computador, rode `python abrir_webgis.py` para abrir o
+HTML exportado pelo servidor local. CSS, JavaScript e eventos estão embutidos
+no único HTML. Ao abrir diretamente como arquivo, a agenda continua disponível.
 O painel Streamlit existente continua sendo apenas a interface de processamento.
 
 Mapa e Agenda compartilham busca sem acentos, categoria, favoritos e período

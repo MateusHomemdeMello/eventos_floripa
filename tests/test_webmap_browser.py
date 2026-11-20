@@ -43,8 +43,6 @@ def test_acceptance_scenarios(tmp_path, mobile):
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.route('**/invalid.example/**', lambda route: route.abort())
-        page.route('**/tiles.openfreemap.org/styles/liberty', lambda route: route.fulfill(
-            status=403, headers={'Access-Control-Allow-Origin': '*'}))
         page.goto(file.as_uri(), wait_until='networkidle')
         page.wait_for_function('window.L && typeof cluster !== "undefined" && cluster !== null', timeout=30000)
         page.locator('#basemapStatus').wait_for(state='visible')
@@ -84,18 +82,15 @@ def test_acceptance_scenarios(tmp_path, mobile):
         page.evaluate('map.setView([-27.59,-48.54], 10, {animate:false})')
         page.wait_for_function("document.querySelector('.cluster-icon')?.textContent==='7'")
         # 4/5: Three saved events, two at A. All components use the same subset.
-        cards = '#agendaList' if mobile else '#placeList'
-        random_button = page.locator('#mobileRandom' if mobile else '#random')
-        if mobile:
-            assert page.locator('#sheet').is_hidden()
-            page.locator('#agendaTab').click()
+        random_button = page.locator('#random')
+        assert page.locator('#sheet, #placeList').count() == 0
+        page.locator('#agendaTab').click()
         for event_id in ['1', '2', '5']:
-            page.locator(f'{cards} [data-favorite="{event_id}"]').click()
-        if mobile:
-            page.locator('#mapTab').click()
+            page.locator(f'#agendaList [data-favorite="{event_id}"]').click()
+        page.locator('#mapTab').click()
         page.locator('#favoriteFilter').click()
         assert page.locator('#counts').inner_text() == '3 eventos · 2 lugares'
-        assert page.locator('#placeList .card').count() == page.locator('#agendaList .card').count() == 3
+        assert page.locator('#agendaList .card').count() == 3
         assert page.evaluate('cluster.getLayers().map(m=>m.options.eventCount).sort((a,b)=>b-a)') == [2, 1]
         page.evaluate("openEvent('1')")
         assert page.locator('.dot').count() == 2
@@ -114,7 +109,7 @@ def test_acceptance_scenarios(tmp_path, mobile):
         for query in ['trindade', 'musica']:
             page.locator('#search').fill(query)
             page.wait_for_timeout(180)
-            assert page.locator('#placeList .card').count() == 1
+            assert page.locator('#agendaList .card').count() == 1
         page.locator('#search').fill('no match')
         page.wait_for_timeout(180)
         assert random_button.is_disabled()
@@ -131,7 +126,7 @@ def test_acceptance_scenarios(tmp_path, mobile):
         assert page.evaluate('cluster.getLayers().length') == 3
         assert page.locator('#agendaList .card').count() == 9
         assert page.locator('#agendaList .ongoing .card').count() == 1
-        assert page.locator('#placeList img[src="x"]').count() == 0
+        assert page.locator('#agendaList img[src="x"]').count() == 0
         page.evaluate("openEvent('missing')")
         assert page.locator('#detailTitle').inner_text() == '<img src=x onerror=alert(1)>'
         assert 'Horário a confirmar' in page.locator('#detailContent').inner_text()
@@ -169,11 +164,10 @@ def test_acceptance_scenarios(tmp_path, mobile):
         assert page.evaluate("distance(eventos[0])") == '0 m'
         page.locator('#agendaTab').click()
         assert page.locator('#agenda').is_visible()
-        assert page.locator('#sheet').is_hidden()
+        assert page.locator('#sheet').count() == 0
         page.locator('#mapTab').click()
+        assert random_button.is_visible()
         if mobile:
-            assert page.locator('#sheet').is_hidden()
-            assert page.locator('#mobileRandom').is_visible()
             assert page.locator('.leaflet-bottom').first.evaluate("(node) => parseFloat(getComputedStyle(node).bottom) < 25")
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         # Storage survives a reload, and the actual generated file opens via file://.
