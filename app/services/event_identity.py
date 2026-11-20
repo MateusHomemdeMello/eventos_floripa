@@ -98,6 +98,7 @@ def publication_identity(row, local, address, district, here_id):
     }
 
 
+
 def group_occurrences(events, *, by_analysis_day=False, matches=same_occurrence):
     def day(event):
         return event.get('analysis_day') if by_analysis_day else None

@@ -88,7 +88,7 @@ def render(root: Path):
         st.info("As chaves são usadas nesta sessão e incluídas no JSON quando você exporta as configurações.")
         full_col, resume_col = st.columns(2)
         start=full_col.button("Nova coleta e processamento",type="primary",use_container_width=True)
-        resume=resume_col.button("Retomar processamento",use_container_width=True)
+        resume=resume_col.button("Retomar processamento",help="Continua a partir dos dados salvos.",use_container_width=True)
         st.caption('Ou execute uma etapa por vez. Cada etapa reaproveita o resultado persistido da anterior.')
         step_cols=st.columns(4)
         collect_only=step_cols[0].button('1. Coletar',use_container_width=True)
