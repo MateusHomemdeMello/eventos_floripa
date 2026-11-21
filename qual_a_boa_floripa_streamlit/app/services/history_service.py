@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 from app.services.event_identity import campus_pin_conflicts
+from app.services.spatial_quality import MANUAL, REOPENED, REVIEW
 
 # Posts com muitos eventos podem carregar uma lista grande de candidatos HERE.
 csv.field_size_limit(max(csv.field_size_limit(), 16 * 1024 * 1024))
@@ -111,13 +112,25 @@ class PostHistory:
         """Persist one API result before starting the next request."""
         self.checkpoint_many([key])
 
-    def checkpoint_many(self, keys):
+    def venue_records(self):
+        if not self.database_path.exists():
+            return []
+        with closing(sqlite3.connect(self.database_path)) as db:
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='venues'").fetchone():
+                return []
+            return [json.loads(payload) for (payload,) in db.execute('SELECT payload FROM venues')]
+
+    def checkpoint_many(self, keys, venue=None):
         self.prepare_database()
         with closing(sqlite3.connect(self.database_path)) as db, db:
             db.executemany('INSERT INTO posts VALUES (?, ?) ON CONFLICT(post_id) '
                            'DO UPDATE SET payload=excluded.payload',
                            (self._database_row(key, self.entries[key]) for key in keys))
             db.execute("UPDATE csv_export SET signature = 'pending'")
+            if venue:
+                db.execute('CREATE TABLE IF NOT EXISTS venues (id TEXT PRIMARY KEY, payload TEXT NOT NULL)')
+                db.execute('INSERT INTO venues VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload',
+                           (venue['id'], json.dumps(venue, ensure_ascii=False, allow_nan=False, default=json_default)))
         self._csv_dirty = True
 
     def sync_csv(self):
@@ -213,10 +226,12 @@ class PostHistory:
                 row['publicar_webgis']=bool(row.get('publicar_webgis',event.get('publicar_webgis',True)))
                 row['_post_id']=key
                 row['_event_index']=index
-                if str(index) not in entry['final']:
-                    row.update(necessita_revisao=True, motivo_revisao='Localização pendente')
-                elif campus_pin_conflicts(event, row):
-                    row.update(necessita_revisao=True, motivo_revisao='Localização incompatível com o CCE da UFSC')
+                if not row.get('status_localizacao'):
+                    row.update(status_localizacao=REVIEW, necessita_revisao=True,
+                               motivo_revisao=row.get('motivo_revisao') or 'Localização sem validação registrada')
+                if row['status_localizacao'] != MANUAL and campus_pin_conflicts(event, row):
+                    row.update(status_localizacao=REVIEW, necessita_revisao=True,
+                               motivo_revisao='Localização incompatível com o CCE da UFSC')
                 final.append(row)
         output = pd.DataFrame(final)
         output['id'] = range(1, len(output)+1)
@@ -226,7 +241,11 @@ class PostHistory:
         rows, references = [], []
         for key, entry in self.entries.items():
             for index, event in enumerate(entry['events']):
-                if str(index) not in entry['final'] or campus_pin_conflicts(event, entry['final'][str(index)]):
+                saved = entry['final'].get(str(index))
+                if saved is None or (
+                    saved.get('status_localizacao') != MANUAL and
+                    (saved.get('status_localizacao') == REOPENED or campus_pin_conflicts(event, saved))
+                ):
                     rows.append(event); references.append((key, str(index)))
         return pd.DataFrame(rows), references
 

@@ -169,11 +169,27 @@ Horários, responsáveis ou locais conflitantes mantêm as ocorrências separada
 O WebGIS também reúne anúncios analisados em dias diferentes e inclui todos os
 links de origem no detalhe e no compartilhamento do evento.
 
-Antes da HERE, a localização considera apenas o dia de análise mais recente
-com eventos, no fuso de São Paulo. Uma ocorrência com várias fontes gera uma
-consulta usando o local ou o endereço mais específico quando as informações
-são compatíveis. Divergências ficam nas falhas de localização para revisão.
-Em bancos antigos sem nenhuma data de análise, a etapa usa o conjunto legado.
+Antes da HERE, a localização considera ocorrências pendentes, reabertas ou com
+evidências alteradas, inclusive de extrações anteriores. As fontes compatíveis
+compartilham uma resolução; fontes divergentes ficam em revisão com seus links.
+O organizador e o perfil divulgador continuam separados do local de realização.
+O cadastro de locais aprovados usa o banco SQLite e pode reaproveitar nomes
+alternativos, endereços e associações a instituições ou complexos.
+
+Na aba **Resultados**, **Revisar localização** permite aprovar um candidato,
+informar coordenadas, vincular um local cadastrado ou corrigir o endereço e
+reabrir a busca. A revisão exige um motivo e guarda o histórico da decisão.
+Somente localizações validadas aparecem como marcadores. Um número de imóvel
+validado é identificado como endereço, e pontos interpolados ficam em revisão.
+Registros legados sem validação permanecem disponíveis para revisão e podem
+aparecer na agenda sem marcador. Conflitos relevantes são retidos da publicação.
+
+É possível configurar a área atendida pela cidade de referência, pelos
+municípios adicionais e pelo raio máximo. A busca web opcional utiliza fontes
+retornadas pela ferramenta de busca e armazena sugestões separadamente para
+revisão. A possibilidade de consultar a HERE depende dos dados disponíveis de
+local e endereço. As contagens na aba Resultados descrevem o estado dos
+registros; medir precisão exige uma amostra com locais de referência revisados.
 
 A agenda é voltada a atividades culturais, esportivas e de lazer. Prazos
 administrativos, como rematrículas, e manifestações de finalidade religiosa,

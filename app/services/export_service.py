@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.services.event_identity import campus_venue, group_occurrences, matches_campus_venue, outside_agenda, publication_identity
+from app.services.spatial_quality import APPROVED, CONFLICT, MANUAL
 
 def text_value(value, default=""):
     if value is None or not pd.api.types.is_scalar(value): return default
@@ -86,7 +87,8 @@ def consolidate_extractions(frame):
 
 
 def source_links(group):
-    return list(dict.fromkeys(event['instagram_url'] for event in group if event['instagram_url']))
+    return list(dict.fromkeys(url for event in group
+                             for url in [event['instagram_url'], *event.get('location_sources', [])] if url))
 
 
 def occurrence_id(row):
@@ -104,9 +106,11 @@ def events_for_webgis(df, today=None):
             if publish.strip().lower() in {"false","0","não","nao"}: continue
         elif not pd.isna(publish) and not bool(publish): continue
         if outside_agenda(r.get('evento')): continue
+        location_status = text_value(r.get('status_localizacao'))
+        if location_status == CONFLICT: continue
         lat,lng=finite(r.get("latitude")),finite(r.get("longitude")); start=date_iso(r.get("data_inicio"))
         if not start: continue
-        if lat is None or lng is None or not(-90<=lat<=90) or not(-180<=lng<=180):
+        if location_status not in APPROVED or lat is None or lng is None or not(-90<=lat<=90) or not(-180<=lng<=180):
             lat,lng=None,None
         end=date_iso(r.get('data_fim')) or start
         if end < start or end < today.isoformat(): continue
@@ -122,16 +126,22 @@ def events_for_webgis(df, today=None):
         resolved_address = text_value(r.get('endereco'))
         explicit_campus = campus_venue(r)
         here_id = text_value(r.get('here_id'))
-        if explicit_campus and not matches_campus_venue(standardized, resolved_address):
+        if explicit_campus and location_status != MANUAL and not matches_campus_venue(standardized, resolved_address):
             lat, lng, standardized, resolved_address, here_id = None, None, '', '', ''
-        local = standardized or explicit_campus or text_value(r.get('local_informado')) or 'Local não informado'
-        address = resolved_address or text_value(r.get('endereco_informado'))
-        district = text_value(r.get('bairro')) or text_value(r.get('bairro_informado'))
+        local = ((standardized if location_status in APPROVED else '') or explicit_campus
+                 or text_value(r.get('local_informado')) or 'Local não informado')
+        address = (resolved_address if location_status in APPROVED else '') or text_value(r.get('endereco_informado'))
+        district = (text_value(r.get('bairro')) if location_status in APPROVED else '') or text_value(r.get('bairro_informado'))
+        if location_status not in APPROVED:
+            here_id = ''
         event = {
             'id': eid, 'nome': text_value(r.get('evento'), 'Evento sem nome'), 'categoria': cat,
             'data_inicio': start, 'data_fim': end, 'hora_inicio': h1 or None, 'hora_fim': h2 or None,
             'local': local, 'endereco': address, 'bairro': district,
             'descricao': text_value(r.get('descricao')), 'lat': lat, 'lng': lng,
+            'precisao_localizacao': text_value(r.get('precisao_localizacao')) if lat is not None else '',
+            'location_sources': [url for url in r.get('fontes_localizacao') if isinstance(url, str)]
+            if isinstance(r.get('fontes_localizacao'), list) and location_status == MANUAL else [],
             'instagram_url': text_value(r.get('url_post')), 'foto': text_value(r.get('foto_url')),
             'identity': publication_identity(r, local, address, district, here_id),
             'reviewed': text_value(r.get('ocorrencia_revisada')),
@@ -143,7 +153,12 @@ def events_for_webgis(df, today=None):
     out = []
     for group in group_occurrences(candidates):
         best = max(group, key=lambda event: event['quality'])
-        published = {key: value for key, value in best.items() if key not in {'identity', 'quality', 'reviewed'}}
+        published = {key: value for key, value in best.items()
+                     if key not in {'identity', 'quality', 'reviewed', 'location_sources'}}
+        located = max(group, key=lambda event: (event['lat'] is not None, event['quality']))
+        if located['lat'] is not None and published['lat'] is None:
+            published.update({key: located[key] for key in ('lat', 'lng', 'local', 'endereco', 'bairro',
+                                                            'precisao_localizacao')})
         published['id'] = group[0]['id']
         published['instagram_urls'] = source_links(group)
         out.append(published)

@@ -7,7 +7,86 @@ from app.controllers.pipeline_controller import PipelineController
 from dataclasses import asdict
 from app.services.config_service import parse_settings, export_config
 from app.services.geocoding_service import validate_here_key, HereAuthenticationError
-from app.services.export_service import render_webgis, events_for_webgis
+from app.services.export_service import render_webgis, events_for_webgis, text_value
+from app.services.spatial_quality import has_position
+
+
+def _location_review(result, controller):
+    events = {(row['_post_id'], row['_event_index']): row
+              for row in result.final.to_dict('records')}
+    if not events:
+        return None
+    with st.expander('Revisar localização'):
+        selected = st.selectbox('Ocorrência', list(events), index=None,
+                                format_func=lambda key: f"{events[key].get('evento')} · {events[key].get('data_inicio')} · {key[0]}")
+        if selected is None:
+            return None
+        event = events[selected]
+        fields = ('status_localizacao', 'motivo_revisao', 'responsavel_evento', 'local_informado',
+                  'endereco_informado', 'bairro_informado', 'municipio_informado', 'evidencia_local',
+                  'evidencia_endereco', 'origem_evidencia_local', 'origem_evidencia_endereco')
+        st.json({field: text_value(event.get(field)) for field in fields if text_value(event.get(field))})
+        links = event.get('fontes_localizacao')
+        if not isinstance(links, list):
+            links = [text_value(event.get('url_post'))]
+        for index, link in enumerate(links, 1):
+            if isinstance(link, str) and link.startswith(('https://', 'http://')):
+                st.link_button(f'Publicação {index}', link)
+        for field in ('evidencias_fontes', 'sugestao_web', 'candidatos_rejeitados_here', 'historico_localizacao'):
+            if isinstance(event.get(field), (list, dict)) and event[field]:
+                st.caption(field.replace('_', ' ').capitalize())
+                st.json(event[field], expanded=False)
+        candidates = event.get('candidatos_here')
+        candidates = [row for row in candidates if has_position(row)] if isinstance(candidates, list) else []
+        if candidates:
+            st.dataframe([{field: candidate.get(field) for field in
+                           ('local_padronizado', 'endereco', 'latitude', 'longitude', 'confianca_endereco',
+                            'precisao_localizacao', 'impedimentos_localizacao')} for candidate in candidates])
+        venues = {venue['id']: venue for venue in controller.registered_venues()}
+        actions = [('aprovar', 'Validar coordenadas manualmente')]
+        if candidates:
+            actions.append(('candidato', 'Aprovar candidato HERE'))
+        if venues:
+            actions.append(('vincular', 'Vincular local cadastrado'))
+        actions.extend([('corrigir_endereco', 'Corrigir endereço e reenfileirar'), ('reabrir', 'Reabrir revisão')])
+        if text_value(event.get('local_cadastrado_id')) in venues:
+            actions.append(('invalidar_cadastro', 'Invalidar local cadastrado'))
+        labels = dict(actions)
+        action = st.selectbox('Decisão', list(labels), format_func=labels.get)
+        location, venue_id, aliases, parent, register = None, None, (), '', False
+        if action == 'candidato':
+            index = st.selectbox('Candidato', range(len(candidates)), format_func=lambda i:
+                                 f"{i + 1}. {candidates[i].get('local_padronizado') or candidates[i].get('endereco')}")
+            location = candidates[index]
+        elif action == 'vincular':
+            venue_id = st.selectbox('Local cadastrado', list(venues),
+                                    format_func=lambda key: f"{venues[key]['name']} · {venues[key]['location'].get('endereco', '')}")
+        elif action in {'aprovar', 'corrigir_endereco'}:
+            name = st.text_input('Espaço de realização', text_value(event.get('local_informado')), key=f'local-{selected}')
+            address = st.text_input('Endereço de realização', text_value(event.get('endereco_informado')), key=f'end-{selected}')
+            city = st.text_input('Município', text_value(event.get('municipio_informado')), key=f'mun-{selected}')
+            district = st.text_input('Bairro', text_value(event.get('bairro_informado')), key=f'bairro-{selected}')
+            if action == 'corrigir_endereco':
+                location = dict(local_informado=name, endereco_informado=address,
+                                municipio_informado=city, bairro_informado=district)
+            else:
+                latitude = st.text_input('Latitude', key=f'lat-{selected}')
+                longitude = st.text_input('Longitude', key=f'lng-{selected}')
+                location = dict(local_padronizado=name, endereco=address, municipio=city,
+                                bairro=district, latitude=latitude, longitude=longitude)
+        if action in {'aprovar', 'candidato'} and location.get('local_padronizado'):
+            register = st.checkbox('Salvar estabelecimento no cadastro', value=True)
+            aliases = st.text_input('Nomes alternativos, separados por vírgula').split(',') if register else ()
+            parent = st.text_input('Instituição ou complexo associado', text_value(event.get('instituicao_local'))) if register else ''
+        reason = st.text_input('Motivo da decisão', key=f'motivo-{selected}')
+        if st.button('Salvar revisão de localização'):
+            try:
+                return controller.review_location(*selected, action='aprovar' if action == 'candidato' else action,
+                                                  reason=reason, location=location, venue_id=venue_id,
+                                                  register=register, aliases=aliases, parent=parent)
+            except (ValueError, OSError, RuntimeError, KeyError) as exc:
+                st.error(str(exc))
+        return None
 
 
 def _import_config():
@@ -17,7 +96,7 @@ def _import_config():
         config,credentials=parse_settings(text)
         st.session_state['config_values']=asdict(config)
         for name,value in asdict(config).items():
-            st.session_state['cfg_'+name]='\n'.join(value) if name=='profiles' else value
+            st.session_state['cfg_'+name]='\n'.join(value) if name in {'profiles', 'allowed_municipalities'} else value
         for name,value in credentials.items(): st.session_state['credential_'+name]=value
         st.session_state['config_message']='Configuração importada.'
     except (ValueError, UnicodeError) as exc:
@@ -59,13 +138,16 @@ def render(root: Path):
             if st.session_state.get('config_message'): st.info(st.session_state['config_message'])
         values=st.session_state.setdefault('config_values',asdict(AppConfig()))
         for name,value in values.items():
-            st.session_state.setdefault('cfg_'+name,'\n'.join(value) if name=='profiles' else value)
+            st.session_state.setdefault('cfg_'+name,'\n'.join(value) if name in {'profiles', 'allowed_municipalities'} else value)
         profiles_text=st.text_area("Perfis do Instagram (1 por linha)",height=120,key='cfg_profiles')
         days=st.number_input("Dias retroativos",1,90,key='cfg_days_back'); limit=st.number_input("Posts por execução",1,200,key='cfg_results_limit'); model=st.text_input("Modelo OpenAI",key='cfg_ai_model')
         st.subheader("Localização")
         st.checkbox('Busca web auxiliar (custo adicional)',key='cfg_use_web_fallback')
         values['use_web_fallback']=st.session_state['cfg_use_web_fallback']
         city=st.text_input("Cidade",key='cfg_reference_city'); state=st.text_input("Estado",key='cfg_reference_state'); radius=st.number_input("Raio máximo (km)",1.0,500.0,key='cfg_max_radius_km')
+        st.session_state.setdefault('cfg_allowed_municipalities', '\n'.join(AppConfig().allowed_municipalities))
+        municipalities = st.text_area('Municípios adicionais atendidos (um por linha)', key='cfg_allowed_municipalities')
+        values['allowed_municipalities'] = [line.strip() for line in municipalities.splitlines() if line.strip()]
         st.subheader("Credenciais")
         for name in ['OPENAI_API_KEY','APIFY_API_TOKEN','HERE_API_KEY']:
             st.session_state.setdefault('credential_'+name,_secret(name))
@@ -88,7 +170,7 @@ def render(root: Path):
         st.info("As chaves são usadas nesta sessão e incluídas no JSON quando você exporta as configurações.")
         full_col, resume_col = st.columns(2)
         start=full_col.button("Nova coleta e processamento",type="primary",use_container_width=True)
-        resume=resume_col.button("Retomar processamento",use_container_width=True)
+        resume=resume_col.button("Retomar processamento",help="Continua a partir dos dados salvos.",use_container_width=True)
         st.caption('Ou execute uma etapa por vez. Cada etapa reaproveita o resultado persistido da anterior.')
         step_cols=st.columns(4)
         collect_only=step_cols[0].button('1. Coletar',use_container_width=True)
@@ -199,8 +281,15 @@ def render(root: Path):
                 st.info('Nenhum levantamento salvo foi encontrado nesta pasta do projeto.')
         else:
             c1,c2,c3=st.columns(3); c1.metric("Posts",len(result.posts)); c2.metric("Eventos",len(result.events)); c3.metric("Revisões",int(result.final.get('necessita_revisao',False).fillna(False).sum()) if 'necessita_revisao' in result.final else 0)
+            if 'status_localizacao' in result.final:
+                counts = result.final['status_localizacao'].value_counts().to_dict()
+                with st.expander('Qualidade da localização'):
+                    st.dataframe([{'Estado': name.replace('_', ' '), 'Eventos': count} for name, count in counts.items()])
+                    if 'origem_localizacao' in result.final:
+                        st.metric('Eventos localizados pelo cadastro',
+                                  int(result.final['origem_localizacao'].eq('cadastro_locais').sum()))
             st.caption('Desmarque “Publicar” para manter um evento no histórico sem exibi-lo no WebGIS ou no site.')
-            publication_columns=['publicar_webgis','evento','categoria','data_inicio','data_fim','data_scraping','data_analise_ia','data_geolocalizacao','observacoes','local_padronizado','local_informado','_post_id','_event_index']
+            publication_columns=['publicar_webgis','evento','categoria','data_inicio','data_fim','data_scraping','data_analise_ia','data_geolocalizacao','status_localizacao','precisao_localizacao','observacoes','local_padronizado','local_informado','_post_id','_event_index']
             publication_columns=[name for name in publication_columns if name in result.final.columns]
             publication=st.data_editor(result.final[publication_columns],use_container_width=True,height=440,hide_index=True,
                 disabled=[name for name in publication_columns if name!='publicar_webgis'],
@@ -212,6 +301,11 @@ def render(root: Path):
                 st.session_state['result']=result
                 st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
                 st.success('Seleção salva e publicações atualizadas.')
+            reviewed = _location_review(result, PipelineController(config, Secrets(openai, apify, here), root))
+            if reviewed:
+                st.session_state['result'] = result = reviewed
+                st.session_state['downloads']={path.name:path.read_bytes() for path in (result.webgis_path,)}
+                st.success('Revisão salva e WebGIS atualizado.')
             for label,path,mime in [("Baixar WebGIS",result.webgis_path,"text/html")]:
                 st.download_button(label,st.session_state['downloads'][path.name],file_name=path.name,mime=mime)
             if not result.extraction_failures.empty:

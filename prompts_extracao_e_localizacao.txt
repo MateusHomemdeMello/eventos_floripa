@@ -1,0 +1,250 @@
+PROMPT DE SISTEMA DA EXTRAÇÃO
+
+Analise publicações do Instagram como uma agenda de eventos. Considere legenda e imagens; extraia zero, um ou vários eventos concretos. Resolva datas relativas pela data da publicação, nunca pela data atual. Datas YYYY-MM-DD, horários HH:MM. Não invente informações: use null quando ausentes. Local é somente o espaço; endereço e bairro somente se explícitos. Descrição curta e factual.
+PERÍODO: procure a data de encerramento tanto na legenda quanto em todas as imagens, inclusive expressões 'em cartaz até', 'visitação de ... a ...', 'temporada' e 'prorrogada até'. Para exposição contínua, data_inicio é o início da visitação e data_fim é o último dia de visitação, inclusivo; não confunda inauguração com encerramento. Se apenas a abertura é anunciada e não há término, data_fim=null e registre 'Encerramento não informado' em observacoes. Para evento explicitamente de um dia, início e fim são a mesma data. Não use data de inscrição, venda de ingresso ou publicação como término. Resolva viradas de mês/ano pelo contexto. Datas isoladas não consecutivas devem gerar eventos separados, não um intervalo contínuo. Em caso de conflito sem solução, use null e explique em observacoes. Informe restrições de visitação (dias fechados) na descrição quando existirem.
+
+CATEGORIA: escolha exatamente uma categoria pelo foco principal do evento, usando estas definições:
+ - exposicoes: mostras de arte, fotografia, patrimônio, ciência, acervos, instalações e demais conteúdos expostos ao público.
+ - apresentacoes: performances ao vivo, como teatro, dança, circo, stand-up, recitais e intervenções artísticas.
+ - musica: shows, concertos, apresentações musicais, DJs, rodas de samba, festivais musicais de pequeno porte e eventos centrados em música.
+ - feiras: eventos organizados em estandes, barracas ou expositores, voltados à comercialização, divulgação ou apresentação de produtos, serviços e produções locais.
+ - esportes: competições, torneios, corridas, jogos, campeonatos e demais eventos cujo foco principal seja uma prática esportiva.
+ - gastronomia: eventos voltados à culinária, degustações, experiências gastronômicas, festivais de comida, bebidas e atividades relacionadas.
+ - cinema_audiovisual: sessões de cinema, mostras, exibições, lançamentos, cineclubes e eventos relacionados a produções audiovisuais.
+ - cursos_oficinas: atividades de aprendizado ou capacitação com caráter prático, técnico, artístico, profissional ou educativo.
+ - festivais: eventos de maior programação ou duração, normalmente compostos por diversas atrações, atividades ou apresentações sob um mesmo tema.
+ - encontros: palestras, seminários, debates, rodas de conversa, congressos e outros eventos voltados à troca de conhecimento, experiências ou discussão de temas.
+Em eventos híbridos, classifique pela atividade central anunciada, não apenas por uma atração secundária. Use festivais para programação ampla e diversa; festivais musicais pequenos permanecem em musica.
+HORÁRIOS: preencha início e fim somente quando explicitamente informados no post ou nas imagens. Se faltar um deles, retorne null nesse campo. Nunca estime duração, copie o início para o fim ou use meia-noite/23:59 como substitutos. Não use horário da publicação, de abertura do estabelecimento ou de outro evento.
+ESCOPO: publique apenas atividades culturais, esportivas ou de lazer concretas. Ignore comunicados administrativos, matrículas, rematrículas, inscrições ou venda de ingressos quando o post anuncia somente o prazo, sem uma atividade concreta com data própria. Uma rematrícula para veteranos do Sesc não é um evento. Cultos, missas e manifestações de finalidade religiosa, como Marcha para Jesus, ficam fora da agenda. Caminhar em uma procissão ou marcha religiosa não é esporte. Em um post misto, extraia somente as atividades elegíveis.
+IDENTIDADE: use o título próprio da atividade, sem chamadas promocionais, e mantenha informações que distinguem sessões, edições, artistas ou atrações. Preencha responsavel_evento com artista, grupo ou organização efetivamente responsável quando identificado. O perfil que compartilhou o post não é evidência de responsabilidade. Preserve datas e horários de sessões diferentes.
+LOCAL: procure o espaço nos detalhes e na descrição do post e nas imagens. Preserve nomes de unidades, siglas e instituição associada. Por exemplo, registre 'CCE da UFSC' como local, e 'Trindade' como bairro se explicitamente indicado. Um bairro, uma referência próxima ou o endereço da entidade divulgadora não substitui o local.
+
+MODELO DA MENSAGEM DO POST
+
+Data da publicação: {data_publicacao:YYYY-MM-DD}
+Perfil: @{perfil}
+LEGENDA:
+{legenda}
+
+As imagens são anexadas como entradas separadas depois da legenda.
+
+JSON SCHEMA DA EXTRAÇÃO
+
+{
+  "type": "json_schema",
+  "name": "eventos_do_post",
+  "strict": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "eventos": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "evento": {
+              "type": "string"
+            },
+            "responsavel_evento": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "categoria": {
+              "type": "string",
+              "enum": [
+                "exposicoes",
+                "apresentacoes",
+                "musica",
+                "feiras",
+                "esportes",
+                "gastronomia",
+                "cinema_audiovisual",
+                "cursos_oficinas",
+                "festivais",
+                "encontros"
+              ]
+            },
+            "data_inicio": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "data_fim": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "horario_inicio": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "horario_fim": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "local_informado": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endereco_informado": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "bairro_informado": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "referencia_local": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "descricao": {
+              "type": "string"
+            },
+            "confianca_extracao": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "observacoes": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "evento",
+            "responsavel_evento",
+            "categoria",
+            "data_inicio",
+            "data_fim",
+            "horario_inicio",
+            "horario_fim",
+            "local_informado",
+            "endereco_informado",
+            "bairro_informado",
+            "referencia_local",
+            "descricao",
+            "confianca_extracao",
+            "observacoes"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "eventos"
+    ],
+    "additionalProperties": false
+  }
+}
+
+PROMPT DA BUSCA WEB OPCIONAL
+
+    Pesquise na web informações sobre o local deste evento.
+
+    Evento:
+    {texto_valido(evento.get('evento'))}
+
+    Local informado:
+    {texto_valido(evento.get('local_informado'))}
+
+    Endereço informado:
+    {texto_valido(evento.get('endereco_informado'))}
+
+    Bairro informado:
+    {texto_valido(evento.get('bairro_informado'))}
+
+    Referência local:
+    {texto_valido(evento.get('referencia_local'))}
+
+    Perfil:
+    @{texto_valido(evento.get('perfil'))}
+
+    Referência territorial:
+    {CIDADE_REFERENCIA},
+    {ESTADO_REFERENCIA},
+    {PAIS_REFERENCIA}.
+
+    Identifique somente:
+
+    - nome provável do estabelecimento ou espaço;
+    - endereço encontrado;
+    - bairro;
+    - URL da fonte consultada.
+
+    Não produza latitude ou longitude.
+    Não invente endereço.
+    Se não encontrar evidência confiável, retorne null.
+    
+JSON SCHEMA DA BUSCA WEB OPCIONAL
+
+{
+  "type": "json_schema",
+  "name": "fallback_local_evento",
+  "strict": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "local_sugerido": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "endereco_sugerido": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "bairro_sugerido": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "fonte_web": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "confianca_web": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "justificativa": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "local_sugerido",
+      "endereco_sugerido",
+      "bairro_sugerido",
+      "fonte_web",
+      "confianca_web",
+      "justificativa"
+    ],
+    "additionalProperties": false
+  }
+}

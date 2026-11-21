@@ -4,6 +4,9 @@ import pandas as pd
 import requests
 from openai import OpenAI
 from app.services.event_identity import campus_venue, matches_campus_venue, normalized
+from app.services.spatial_quality import (
+    AUTO, REVIEW, UNKNOWN, address_parts, coordinate, organizer_as_venue, street_identity,
+)
 
 GENERIC_VENUE_WORDS = {'de', 'da', 'do', 'das', 'dos', 'e', 'centro', 'teatro', 'espaco',
                        'cultural', 'shopping', 'praca', 'sala', 'auditorio', 'unidade'}
@@ -73,6 +76,8 @@ def validate_here_key(key, config):
     request_here(HERE_DISCOVER_URL, {'at': f'{config.reference_lat},{config.reference_lon}', 'q': config.reference_city, 'limit': 1}, key, config.here_timeout)
 
 def configure(api_key, openai_key, config):
+    global MUNICIPIOS_ATENDIDOS
+    MUNICIPIOS_ATENDIDOS = {normalized(config.reference_city), *(normalized(city) for city in config.allowed_municipalities)}
     global HERE_API_KEY, openai_client, MODELO_IA, CIDADE_REFERENCIA, ESTADO_REFERENCIA, PAIS_REFERENCIA, CODIGO_PAIS, CENTRO_REFERENCIA, RAIO_MAXIMO_KM, HERE_LIMITE_CANDIDATOS, HERE_IDIOMA, HERE_TIMEOUT, CONFIANCA_MINIMA_LOCALIZACAO, DIFERENCA_MINIMA_CANDIDATOS, USAR_BUSCA_WEB_FALLBACK
     HERE_API_KEY=api_key; openai_client=OpenAI(api_key=openai_key, timeout=90.0) if config.use_web_fallback else None; MODELO_IA=config.ai_model
     CIDADE_REFERENCIA=config.reference_city; ESTADO_REFERENCIA=config.reference_state; PAIS_REFERENCIA=config.reference_country; CODIGO_PAIS=config.country_code
@@ -138,6 +143,10 @@ FALLBACK_LOCAL_SCHEMA = {
         "additionalProperties": False
     }
 }
+
+
+FALLBACK_LOCAL_SCHEMA['schema']['properties']['evidencia_web'] = {'type': ['string', 'null']}
+FALLBACK_LOCAL_SCHEMA['schema']['required'].append('evidencia_web')
 
 
 def texto_valido(valor):
@@ -294,69 +303,18 @@ def montar_consultas_here(evento):
     Monta consultas progressivas para a HERE.
     As consultas mais específicas são executadas primeiro.
     """
-    evento_nome = texto_valido(
-        evento.get("evento")
-    )
-
-    local = texto_valido(
-        evento.get("local_informado")
-    )
-
-    endereco = texto_valido(
-        evento.get("endereco_informado")
-    )
-
-    bairro = texto_valido(
-        evento.get("bairro_informado")
-    )
-
-    referencia = texto_valido(
-        evento.get("referencia_local")
-    )
-
+    local = texto_valido(evento.get('local_informado'))
+    endereco = texto_valido(evento.get('endereco_informado'))
+    bairro = texto_valido(evento.get('bairro_informado'))
+    referencia = texto_valido(evento.get('referencia_local'))
+    municipio = texto_valido(evento.get('municipio_informado')) or CIDADE_REFERENCIA
     consultas = []
-
     if local and endereco:
-        consultas.append(
-            f"{local}, {endereco}, "
-            f"{CIDADE_REFERENCIA}, "
-            f"{ESTADO_REFERENCIA}"
-        )
-
-    if endereco:
-        consultas.append(
-            f"{endereco}, "
-            f"{CIDADE_REFERENCIA}, "
-            f"{ESTADO_REFERENCIA}"
-        )
-
-    if local and bairro:
-        consultas.append(
-            f"{local}, {bairro}, "
-            f"{CIDADE_REFERENCIA}, "
-            f"{ESTADO_REFERENCIA}"
-        )
-
-    if local and referencia:
-        consultas.append(
-            f"{local}, {referencia}, "
-            f"{CIDADE_REFERENCIA}, "
-            f"{ESTADO_REFERENCIA}"
-        )
-
+        consultas.append(f'{local}, {endereco}, {municipio}, {ESTADO_REFERENCIA}')
+    if local and (bairro or referencia):
+        consultas.append(f'{local}, {bairro or referencia}, {municipio}, {ESTADO_REFERENCIA}')
     if local:
-        consultas.append(
-            f"{local}, "
-            f"{CIDADE_REFERENCIA}, "
-            f"{ESTADO_REFERENCIA}"
-        )
-
-    if evento_nome and bairro:
-        consultas.append(
-            f"{evento_nome}, {bairro}, "
-            f"{CIDADE_REFERENCIA}, "
-            f"{ESTADO_REFERENCIA}"
-        )
+        consultas.append(f'{local}, {municipio}, {ESTADO_REFERENCIA}')
 
     # Remove consultas repetidas preservando a ordem
     return list(
@@ -455,151 +413,90 @@ def avaliar_candidato_here(
     Padroniza e calcula a confiança de um
     candidato retornado pela HERE.
     """
-    if item.get('resultType') in {'locality', 'administrativeArea', 'postalCodePoint', 'street', 'intersection'}:
-        return None
-    posicao = item.get(
-        "position",
-        {}
-    )
-
-    latitude = posicao.get("lat")
-
-    longitude = posicao.get("lng")
-
-    if latitude is None or longitude is None:
-        return None
-
-    latitude = float(latitude)
-
-    longitude = float(longitude)
-
-    distancia_centro = haversine_km(
-        CENTRO_REFERENCIA[0],
-        CENTRO_REFERENCIA[1],
-        latitude,
-        longitude
-    )
-
-    endereco_here = item.get(
-        "address",
-        {}
-    )
-
-    nome_here = texto_valido(
-        item.get("title")
-    )
-
-    endereco_formatado = texto_valido(
-        endereco_here.get("label")
-    )
-
-    municipio_here = texto_valido(
-        endereco_here.get("city")
-    )
-
-    estado_here = (
-        texto_valido(
-            endereco_here.get("state")
-        )
-        or texto_valido(
-            endereco_here.get("stateCode")
-        )
-    )
-
-    bairro_here = (
-        texto_valido(
-            endereco_here.get("district")
-        )
-        or texto_valido(
-            endereco_here.get("subdistrict")
-        )
-    )
-
-    local_informado = (
-        texto_valido(
-            evento.get("local_informado")
-        )
-        or texto_valido(
-            evento.get("evento")
-        )
-    )
-
-    endereco_informado = texto_valido(
-        evento.get("endereco_informado")
-    )
-
-    campus = campus_venue(evento)
-    if campus and not matches_campus_venue(nome_here, endereco_formatado):
-        return None
-
+    address = item.get('address') or {}
+    name = texto_valido(item.get('title'))
+    label = texto_valido(address.get('label'))
+    position = item.get('position') or {}
+    latitude = coordinate(position.get('lat'), 90)
+    longitude = coordinate(position.get('lng'), 180)
+    kind = item.get('resultType')
+    number_type = item.get('houseNumberType')
+    city = texto_valido(address.get('city'))
+    district = texto_valido(address.get('district')) or texto_valido(address.get('subdistrict'))
+    state = texto_valido(address.get('state')) or texto_valido(address.get('stateCode'))
     explicit_name = texto_valido(evento.get('local_informado'))
-    matches_address = False
-    if explicit_name and not campus:
-        # Exact address evidence may identify a building number. A differently
-        # named point of interest is still a conflicting venue.
-        number = normalized(texto_valido(endereco_here.get('houseNumber')))
-        street = normalized(endereco_here.get('street'))
-        supplied = f' {normalized(endereco_informado)} '
-        matches_address = (item.get('resultType') == 'houseNumber' and number and street
-                           and f' {number} ' in supplied and f' {street} ' in supplied)
-        if not compatible_venue(explicit_name, nome_here) and not matches_address:
-            return None
+    explicit_address = texto_valido(evento.get('endereco_informado'))
+    explicit_city = normalized(evento.get('municipio_informado'))
+    explicit_district = normalized(evento.get('bairro_informado'))
+    organizer = texto_valido(evento.get('responsavel_evento'))
 
-    bairro_informado = texto_valido(
-        evento.get("bairro_informado")
-    )
+    def reject(reason):
+        audit = evento.get('_rejected_here')
+        if isinstance(audit, list) and len(audit) < 40:
+            record = {'here_id': item.get('id'), 'local_padronizado': name, 'endereco': label,
+                      'latitude': latitude, 'longitude': longitude, 'motivo_rejeicao': reason}
+            if record not in audit:
+                audit.append(record)
+        return None
 
-    score_nome = 1.0 if campus else similaridade_textual(
-        local_informado,
-        nome_here
-    )
+    if not (explicit_name or explicit_address):
+        return reject('Sem evidência do local de realização')
+    if latitude is None or longitude is None:
+        return reject('Coordenadas ausentes ou inválidas')
+    if kind not in {'place', 'houseNumber'}:
+        return reject('Resultado sem precisão de estabelecimento ou número')
+    distance = haversine_km(*CENTRO_REFERENCIA, latitude, longitude)
+    if distance > RAIO_MAXIMO_KM:
+        return reject('Fora do raio territorial configurado')
+    if ((city and normalized(city) not in MUNICIPIOS_ATENDIDOS)
+            or (explicit_city and city and explicit_city != normalized(city))
+            or (state and normalized(state) not in {normalized(ESTADO_REFERENCIA), 'sc'}
+                and normalized(ESTADO_REFERENCIA) == 'santa catarina')
+            or (address.get('countryCode') and address['countryCode'] != CODIGO_PAIS)):
+        return reject('Município, UF ou país incompatível')
+    if explicit_district and district and explicit_district != normalized(district):
+        return reject('Bairro incompatível com a fonte')
+    if (kind == 'place' and organizer and compatible_venue(organizer, name)
+            and (not explicit_name or not compatible_venue(explicit_name, name))):
+        return reject('Candidato corresponde à sede do organizador')
+    if campus_venue(evento) and kind == 'place' and not matches_campus_venue(name, ''):
+        return reject('Candidato não identifica a unidade CCE da UFSC')
 
-    score_endereco = similaridade_textual(
-        endereco_informado,
-        endereco_formatado
-    )
+    street, number = address_parts(explicit_address)
+    candidate_street, candidate_number = address_parts(label)
+    candidate_street = street_identity(address.get('street') or candidate_street)
+    candidate_number = normalized(address.get('houseNumber')) or candidate_number
+    street = street_identity(street)
+    if street and candidate_street and street != candidate_street:
+        return reject('Logradouro incompatível com o endereço de realização')
+    if number and candidate_number and number != candidate_number:
+        return reject('Número incompatível com o endereço de realização')
 
-    score_bairro = similaridade_textual(
-        bairro_informado,
-        bairro_here
-    )
+    exact_address = bool(street and number and street == candidate_street and number == candidate_number)
+    if kind == 'place' and not (explicit_name and compatible_venue(explicit_name, name)):
+        if not (campus_venue(evento) and matches_campus_venue(name, '')):
+            return reject('POI diferente do espaço anunciado')
+    if kind == 'houseNumber' and not exact_address:
+        return reject('Logradouro e número do endereço não confirmados')
 
-    score_municipio = similaridade_textual(
-        CIDADE_REFERENCIA,
-        municipio_here
-    )
-
-    score_distancia = max(
-        0.0,
-        1.0
-        - distancia_centro
-        / RAIO_MAXIMO_KM
-    )
-
-    score_here = (
-        item.get("scoring", {})
-        .get("queryScore", 0)
-        or 0
-    )
-
-    if endereco_informado:
-        confianca = (
-            score_nome * 0.30
-            + score_endereco * 0.25
-            + score_bairro * 0.10
-            + score_municipio * 0.15
-            + score_distancia * 0.10
-            + float(score_here) * 0.10
-        )
-
+    reasons = []
+    if not city:
+        reasons.append('Município não confirmado')
+    if street and not candidate_street or number and not candidate_number:
+        reasons.append('Endereço explícito não confirmado integralmente')
+    if kind == 'houseNumber' and number_type not in {'PA', 'MPA'}:
+        reasons.append('Endereço interpolado ou precisão do ponto desconhecida')
+    score_nome = 1.0 if campus_venue(evento) and kind == 'place' else similaridade_textual(explicit_name, name)
+    score_endereco = 1.0 if exact_address else similaridade_textual(explicit_address, label)
+    score_bairro = similaridade_textual(explicit_district, district)
+    score_municipio = float(bool(city))
+    score_here = float((item.get('scoring') or {}).get('queryScore') or 0)
+    if kind == 'houseNumber':
+        confidence = 0.90 + 0.10 * score_here
+    elif explicit_address:
+        confidence = 0.52 * score_nome + 0.30 * score_endereco + 0.08 * score_municipio + 0.10 * score_here
     else:
-        confianca = (
-            score_nome * 0.50
-            + score_bairro * 0.10
-            + score_municipio * 0.15
-            + score_distancia * 0.15
-            + float(score_here) * 0.10
-        )
+        confidence = 0.80 * score_nome + 0.10 * score_municipio + 0.10 * score_here
 
     return {
         "here_id": item.get("id"),
@@ -612,18 +509,22 @@ def avaliar_candidato_here(
             extrair_categoria_here(item)
         ),
 
-        "local_padronizado": explicit_name if matches_address else nome_here,
+        "local_padronizado": name if kind == 'place' else None,
+        "precisao_localizacao": "poi" if kind == 'place' else "endereco",
+        "tipo_numero_here": number_type,
+        "acessos_here": item.get('access') or [],
+        "impedimentos_localizacao": reasons,
 
-        "endereco": endereco_formatado,
+        "endereco": label,
 
-        "bairro": bairro_here,
+        "bairro": district,
 
-        "municipio": municipio_here,
+        "municipio": city,
 
-        "uf": estado_here,
+        "uf": state,
 
         "pais": texto_valido(
-            endereco_here.get("countryName")
+            address.get("countryName")
         ),
 
         "latitude": latitude,
@@ -631,7 +532,7 @@ def avaliar_candidato_here(
         "longitude": longitude,
 
         "distancia_centro_km": round(
-            distancia_centro,
+            distance,
             2
         ),
 
@@ -660,12 +561,12 @@ def avaliar_candidato_here(
         ),
 
         "score_here": round(
-            float(score_here),
+            score_here,
             3
         ),
 
         "confianca_endereco": round(
-            confianca,
+            confidence,
             3
         ),
 
@@ -690,99 +591,38 @@ def buscar_candidatos_here(
     district = normalized(evento.get('bairro_informado'))
     if (not venue or venue == district) and not texto_valido(evento.get('endereco_informado')):
         return []
-    consultas = montar_consultas_here(
-        evento
-    )
+    if organizer_as_venue(evento):
+        evento = {**evento, 'local_informado': None}
+    venue = normalized(evento.get('local_informado'))
+    district = normalized(evento.get('bairro_informado'))
+    address = texto_valido(evento.get('endereco_informado'))
+    if (not venue or venue == district) and not address:
+        return []
+    city = texto_valido(evento.get('municipio_informado')) or CIDADE_REFERENCIA
+    candidates = {}
 
-    candidatos = []
-
-    ids_encontrados = set()
-
-    endereco = texto_valido(
-        evento.get("endereco_informado")
-    )
-
-    if endereco:
-        consulta_endereco = (
-            f"{endereco}, "
-            f"{CIDADE_REFERENCIA}, "
-            f"{ESTADO_REFERENCIA}, "
-            f"{PAIS_REFERENCIA}"
-        )
-
-        itens_geocode = pesquisar_here_geocode(
-            consulta_endereco
-        )
-
-        for item in itens_geocode:
-            candidato = avaliar_candidato_here(
-                evento=evento,
-                item=item,
-                consulta=consulta_endereco,
-                origem="here_geocode"
-            )
-
-            if candidato is None:
+    def add(items, query, origin):
+        for item in items:
+            candidate = avaliar_candidato_here(evento, item, query, origin)
+            if candidate is None:
                 continue
-
-            identificador = (
-                candidato.get("here_id")
-                or (
-                    candidato["latitude"],
-                    candidato["longitude"]
-                )
+            identity = candidate['here_id'] or (
+                candidate['here_result_type'], normalized(item.get('title')),
+                normalized(candidate['endereco']), candidate['latitude'], candidate['longitude'],
             )
+            previous = candidates.get(identity)
+            if previous is None or candidate['confianca_endereco'] > previous['confianca_endereco']:
+                candidates[identity] = candidate
 
-            if identificador not in ids_encontrados:
-                ids_encontrados.add(
-                    identificador
-                )
-
-                candidatos.append(
-                    candidato
-                )
-
-    for consulta in consultas:
-        itens_discover = pesquisar_here_discover(
-            consulta
-        )
-
-        for item in itens_discover:
-            candidato = avaliar_candidato_here(
-                evento=evento,
-                item=item,
-                consulta=consulta,
-                origem="here_discover"
-            )
-
-            if candidato is None:
-                continue
-
-            identificador = (
-                candidato.get("here_id")
-                or (
-                    candidato["latitude"],
-                    candidato["longitude"]
-                )
-            )
-
-            if identificador not in ids_encontrados:
-                ids_encontrados.add(
-                    identificador
-                )
-
-                candidatos.append(
-                    candidato
-                )
-
-    candidatos.sort(
-        key=lambda candidato: (
-            candidato[
-                "confianca_endereco"
-            ]
-        ),
-        reverse=True
-    )
+    if address:
+        query = f'{address}, {city}, {ESTADO_REFERENCIA}, {PAIS_REFERENCIA}'
+        add(pesquisar_here_geocode(query), query, 'here_geocode')
+    for query in montar_consultas_here(evento):
+        add(pesquisar_here_discover(query), query, 'here_discover')
+    candidatos = sorted(candidates.values(), key=lambda item: (
+        not item['impedimentos_localizacao'], item['precisao_localizacao'] == 'poi',
+        item['confianca_endereco'],
+    ), reverse=True)
 
     return candidatos
 
@@ -795,7 +635,16 @@ def pesquisar_local_na_web(
     aceita coordenadas fornecidas pela IA.
     """
     prompt = f"""
-    Pesquise na web informações sobre o local deste evento.
+    Pesquise o espaço físico onde esta ocorrência realmente acontece.
+    Confirme a relação entre endereço, evento, data e espaço. A sede do organizador,
+    o perfil divulgador e o endereço para inscrição ou retirada de ingressos não são
+    evidência de realização. Se só houver uma página institucional, retorne null.
+
+    Data da ocorrência:
+    {texto_valido(evento.get("data_inicio"))}
+
+    Responsável:
+    {texto_valido(evento.get("responsavel_evento"))}
 
     Evento:
     {texto_valido(evento.get("evento"))}
@@ -825,7 +674,9 @@ def pesquisar_local_na_web(
     - nome provável do estabelecimento ou espaço;
     - endereço encontrado;
     - bairro;
-    - URL da fonte consultada.
+    - URL da fonte consultada;
+    - trecho curto literal da fonte que sustenta a realização no espaço;
+    - justificativa da relação entre endereço e ocorrência.
 
     Não produza latitude ou longitude.
     Não invente endereço.
@@ -859,295 +710,119 @@ def pesquisar_local_na_web(
             "format": FALLBACK_LOCAL_SCHEMA
         },
 
+        include=["web_search_call.action.sources"],
         max_output_tokens=1800,
 
         store=False
     )
 
-    return json.loads(
-        resposta.output_text
-    )
+    suggestion = json.loads(resposta.output_text)
+    verified = set()
+    for item in getattr(resposta, 'output', []):
+        action = getattr(item, 'action', None)
+        for source in getattr(action, 'sources', None) or []:
+            url = getattr(source, 'url', None)
+            if url:
+                verified.add(url)
+        for content in getattr(item, 'content', None) or []:
+            for citation in getattr(content, 'annotations', None) or []:
+                if getattr(citation, 'type', '') == 'url_citation':
+                    verified.add(citation.url)
+    if suggestion.get('fonte_web') not in verified:
+        return {}
+    return suggestion
 
 
-def selecionar_melhor_candidato(
-    candidatos
-):
-    """
-    Seleciona o melhor resultado e identifica
-    situações ambíguas.
-    """
+def selecionar_melhor_candidato(candidatos):
     if not candidatos:
         return None
-
-    melhor = candidatos[0].copy()
-
-    segundo_score = (
-        candidatos[1][
-            "confianca_endereco"
-        ]
-        if len(candidatos) > 1
-        else 0.0
-    )
-
-    diferenca = (
-        melhor["confianca_endereco"]
-        - segundo_score
-    )
-
-    melhor[
-        "quantidade_candidatos_here"
-    ] = len(candidatos)
-
-    melhor[
-        "diferenca_segundo_candidato"
-    ] = round(
-        diferenca,
-        3
-    )
-
-    melhor[
-        "candidatos_here"
-    ] = candidatos
-
-    if (
-        melhor["distancia_centro_km"]
-        > RAIO_MAXIMO_KM
+    best = candidatos[0].copy()
+    peers = [candidate for candidate in candidatos[1:] if
+             candidate.get('precisao_localizacao') == best.get('precisao_localizacao')
+             and not candidate.get('impedimentos_localizacao')]
+    difference = best['confianca_endereco'] - peers[0]['confianca_endereco'] if peers else None
+    reasons = list(best.get('impedimentos_localizacao', []))
+    if best.get('precisao_localizacao') == 'poi' and any(
+        normalized(peer.get('local_padronizado')) == normalized(best.get('local_padronizado'))
+        and ((peer.get('municipio') and best.get('municipio') and
+              normalized(peer['municipio']) != normalized(best['municipio']))
+             or (peer.get('bairro') and best.get('bairro') and
+                 normalized(peer['bairro']) != normalized(best['bairro'])))
+        for peer in peers
     ):
-        melhor[
-            "necessita_revisao"
-        ] = True
-
-        melhor[
-            "motivo_revisao"
-        ] = (
-            "Resultado fora do raio "
-            "territorial configurado"
-        )
-
-    elif (
-        melhor["confianca_endereco"]
-        < CONFIANCA_MINIMA_LOCALIZACAO
-    ):
-        melhor[
-            "necessita_revisao"
-        ] = True
-
-        melhor[
-            "motivo_revisao"
-        ] = (
-            "Baixa compatibilidade entre "
-            "o evento e o local encontrado"
-        )
-
-    elif (
-        len(candidatos) > 1
-        and diferenca
-        < DIFERENCA_MINIMA_CANDIDATOS
-    ):
-        melhor[
-            "necessita_revisao"
-        ] = True
-
-        melhor[
-            "motivo_revisao"
-        ] = (
-            "Existem candidatos concorrentes "
-            "com pontuações semelhantes"
-        )
-
-    else:
-        melhor[
-            "necessita_revisao"
-        ] = False
-
-        melhor[
-            "motivo_revisao"
-        ] = None
-
-    return melhor
+        reasons.append('Estabelecimentos homônimos em territórios distintos')
+    if best['confianca_endereco'] < CONFIANCA_MINIMA_LOCALIZACAO:
+        reasons.append('Compatibilidade abaixo do limiar configurado')
+    if difference is not None and difference < DIFERENCA_MINIMA_CANDIDATOS:
+        reasons.append('Candidatos concorrentes sem margem suficiente')
+    best.update(quantidade_candidatos_here=len(candidatos),
+                diferenca_segundo_candidato=round(difference, 3) if difference is not None else None,
+                candidatos_here=candidatos, necessita_revisao=bool(reasons),
+                motivo_revisao='; '.join(reasons) or None,
+                status_localizacao=REVIEW if reasons else AUTO)
+    return best
 
 
-def localizar_evento(
-    evento
-):
-    """
-    Localiza o evento com a HERE e utiliza
-    pesquisa web apenas como fallback.
-    """
-    campus = campus_venue(evento)
+def localizar_evento(evento):
+    query = dict(evento)
+    campus = campus_venue(query)
     if campus:
-        evento = {**evento, 'local_informado': campus}
+        query['local_informado'] = campus
+    if organizer_as_venue(query):
+        query['local_informado'] = None
+        if not query.get('evidencia_endereco'):
+            query['endereco_informado'] = None
+    name = normalized(query.get('local_informado'))
+    address = texto_valido(query.get('endereco_informado'))
+    if not address and (not name or name == normalized(query.get('bairro_informado'))):
+        return {'status_localizacao': UNKNOWN, 'necessita_revisao': True,
+                'motivo_revisao': 'Sem evidência do local de realização',
+                'latitude': None, 'longitude': None}
+    rejected = []
+    query['_rejected_here'] = rejected
+    best = selecionar_melhor_candidato(buscar_candidatos_here(query))
+    if best and not best.get('necessita_revisao', True):
+        return {**best, 'candidatos_rejeitados_here': rejected}
 
-    candidatos = buscar_candidatos_here(
-        evento
-    )
+    if USAR_BUSCA_WEB_FALLBACK:
+        try:
+            suggestion = pesquisar_local_na_web(query)
+        except (RuntimeError, ValueError) as exc:
+            if not best:
+                raise
+            best['aviso_localizacao'] = str(exc)
+        except Exception:
+            if not best:
+                raise RuntimeError('Busca web indisponível; localização pendente.') from None
+            best['aviso_localizacao'] = 'Busca web indisponível; candidato HERE preservado para revisão.'
+        else:
+            if suggestion.get('fonte_web') and suggestion.get('evidencia_web'):
+                fields = ('local_informado', 'endereco_informado', 'bairro_informado')
+                auxiliary = ('local_sugerido', 'endereco_sugerido', 'bairro_sugerido')
+                enriched = {**query, **{field: texto_valido(suggestion.get(source))
+                                       for field, source in zip(fields, auxiliary)
+                                       if not texto_valido(query.get(field)) and texto_valido(suggestion.get(source))}}
+                if enriched != query:
+                    fallback = selecionar_melhor_candidato(buscar_candidatos_here(enriched))
+                    if fallback:
+                        best = {**fallback, 'status_localizacao': REVIEW, 'necessita_revisao': True,
+                                'origem_localizacao': 'web_fallback_here',
+                                'motivo_revisao': 'Confirme a evidência auxiliar da web',
+                                'sugestao_web': suggestion, 'fonte_web': suggestion.get('fonte_web')}
 
-    melhor = selecionar_melhor_candidato(
-        candidatos
-    )
+    if best:
+        return {**best, 'candidatos_rejeitados_here': rejected}
+    return {'status_localizacao': REVIEW, 'latitude': None, 'longitude': None,
+            'necessita_revisao': True, 'motivo_revisao': 'Nenhum candidato HERE compatível',
+            'candidatos_here': [], 'candidatos_rejeitados_here': rejected}
 
-    # Aceita diretamente um resultado confiável
-    if (
-        melhor
-        and not melhor.get(
-            "necessita_revisao",
-            True
-        )
-    ):
-        return melhor
 
-    # Se a HERE retornou um resultado de baixa confiança,
-    # guardamos esse resultado antes do fallback.
-    melhor_inicial = (
-        melhor.copy()
-        if melhor
-        else None
-    )
-
-    if not USAR_BUSCA_WEB_FALLBACK:
-        if melhor_inicial:
-            return melhor_inicial
-
-        return {
-            "latitude": None,
-            "longitude": None,
-            "necessita_revisao": True,
-            "motivo_revisao": (
-                "Nenhum candidato encontrado na HERE"
-            ),
-            "quantidade_candidatos_here": 0,
-            "candidatos_here": []
-        }
-
-    try:
-        pesquisa_web = pesquisar_local_na_web(evento)
-    except Exception:
-        if melhor_inicial:
-            melhor_inicial['aviso_localizacao'] = 'Busca web indisponível; resultado HERE preservado para revisão.'
-            return melhor_inicial
-        raise RuntimeError('Busca web indisponível e nenhum candidato HERE; localização pendente.') from None
-
-    local_web = texto_valido(
-        pesquisa_web.get("local_sugerido")
-    )
-
-    endereco_web = texto_valido(
-        pesquisa_web.get("endereco_sugerido")
-    )
-
-    if not local_web and not endereco_web:
-        if melhor_inicial:
-            melhor_inicial[
-                "fonte_web"
-            ] = pesquisa_web.get(
-                "fonte_web"
-            )
-
-            melhor_inicial[
-                "justificativa_web"
-            ] = pesquisa_web.get(
-                "justificativa"
-            )
-
-            return melhor_inicial
-
-        return {
-            "latitude": None,
-            "longitude": None,
-            "necessita_revisao": True,
-            "motivo_revisao": (
-                "Local não encontrado na HERE "
-                "nem na pesquisa web"
-            ),
-            "fonte_web": pesquisa_web.get(
-                "fonte_web"
-            ),
-            "quantidade_candidatos_here": 0,
-            "candidatos_here": []
-        }
-
-    evento_fallback = evento.copy()
-
-    if local_web:
-        evento_fallback[
-            "local_informado"
-        ] = local_web
-
-    if endereco_web:
-        evento_fallback[
-            "endereco_informado"
-        ] = endereco_web
-
-    bairro_web = texto_valido(
-        pesquisa_web.get("bairro_sugerido")
-    )
-
-    if bairro_web:
-        evento_fallback[
-            "bairro_informado"
-        ] = bairro_web
-
-    candidatos_fallback = buscar_candidatos_here(
-        evento_fallback
-    )
-
-    if campus:
-        candidatos_fallback = [
-            candidate for candidate in candidatos_fallback
-            if matches_campus_venue(candidate.get('local_padronizado'), candidate.get('endereco'))
-        ]
-    elif texto_valido(evento.get('local_informado')):
-        candidatos_fallback = [
-            candidate for candidate in candidatos_fallback
-            if compatible_venue(evento.get('local_informado'), candidate.get('local_padronizado'))
-        ]
-
-    melhor_fallback = selecionar_melhor_candidato(
-        candidatos_fallback
-    )
-
-    if melhor_fallback:
-        melhor_fallback[
-            "origem_localizacao"
-        ] = "web_fallback_here"
-
-        melhor_fallback[
-            "fonte_web"
-        ] = pesquisa_web.get(
-            "fonte_web"
-        )
-
-        melhor_fallback[
-            "confianca_web"
-        ] = pesquisa_web.get(
-            "confianca_web"
-        )
-
-        melhor_fallback[
-            "justificativa_web"
-        ] = pesquisa_web.get(
-            "justificativa"
-        )
-
-        return melhor_fallback
-
-    if melhor_inicial:
-        melhor_inicial[
-            "fonte_web"
-        ] = pesquisa_web.get(
-            "fonte_web"
-        )
-        return melhor_inicial
-
-    return {'latitude': None, 'longitude': None, 'necessita_revisao': True,
-            'motivo_revisao': 'Nenhum candidato HERE após a busca web',
-            'candidatos_here': [], 'quantidade_candidatos_here': 0}
-
-def geocode_events(events: pd.DataFrame, here_key: str, openai_key: str, config, progress=None, on_result=None):
+def geocode_events(events: pd.DataFrame, here_key: str, openai_key: str, config, progress=None, on_result=None,
+                   resolve_cached=None):
     configure(here_key,openai_key,config); located=[]; failures=[]; total=max(len(events),1)
     for n,(idx,event) in enumerate(events.iterrows(),1):
         try:
-            result=localizar_evento(event)
+            result = (resolve_cached(event) if resolve_cached else None) or localizar_evento(event)
         except (HereAuthenticationError, HereUnavailableError) as exc:
             if on_result:
                 on_result(idx, None, str(exc))

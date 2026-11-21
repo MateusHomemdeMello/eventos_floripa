@@ -29,7 +29,7 @@ def parse_config(text):
             low, high = bounds.get(key, (0 if key == 'ai_interval_seconds' else 1, float('inf')))
             valid = valid and low <= value <= high
         elif isinstance(default, list):
-            valid = isinstance(value,list) and bool(value) and all(isinstance(x,str) and x.strip() for x in value)
+            valid = isinstance(value,list) and (key != 'profiles' or bool(value)) and all(isinstance(x,str) and x.strip() for x in value)
         else:
             valid = isinstance(value,str) and bool(value.strip())
         if not valid:

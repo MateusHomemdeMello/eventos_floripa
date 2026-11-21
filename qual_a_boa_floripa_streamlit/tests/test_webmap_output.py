@@ -44,7 +44,7 @@ def test_publishes_one_record_per_occurrence_across_sources():
     rows = [
         {**original, '_post_id': 'source-a'},
         {**original, '_post_id': 'source-b', 'evento': 'Show: Banda Horizonte!',
-         'latitude': -27.6, 'longitude': -48.5, 'url_post': 'https://www.instagram.com/p/B/'},
+         'latitude': -27.6, 'longitude': -48.5, 'status_localizacao': 'validado_automaticamente', 'url_post': 'https://www.instagram.com/p/B/'},
         {**original, '_post_id': 'late-session', 'horario_inicio': '21:00'},
         {**original, '_post_id': 'other-venue', 'local_informado': 'Teatro do Bairro'},
         {**original, '_post_id': 'other-organizer', 'responsavel_evento': 'Grupo Catarinense'},
@@ -104,7 +104,7 @@ def test_legacy_records_are_filtered_and_conflicting_campus_pin_is_removed():
          'local_padronizado': 'Caixa Econômica Federal', 'endereco': 'Agência Trindade',
          'latitude': -27.6, 'longitude': -48.5},
         {'evento': 'Oficina no Centro Cultural', 'descricao': 'Organizada pelo CCE da UFSC.',
-         'local_padronizado': 'Centro Cultural', 'latitude': -27.6, 'longitude': -48.5},
+         'local_informado': 'Centro Cultural', 'status_localizacao': 'validado_manualmente', 'latitude': -27.6, 'longitude': -48.5},
     ]).assign(data_inicio='2099-01-01')
     screening, workshop = events_for_webgis(frame, date(2099, 1, 1))
     assert screening['local'] == 'CCE da UFSC'

@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -7,11 +8,14 @@ import pandas as pd
 
 from app.models.results import PipelineResult
 from app.services.instagram_service import ApifyCollectionFailed, collect_posts
-from app.services.ai_service import extract_events
+from app.services.ai_service import EXTRACTION_VERSION, extract_events
 from app.services.geocoding_service import geocode_events
 from app.services.export_service import consolidate_extractions, export_all
 from app.services.history_service import PostHistory, post_key, records
-from app.services.location_validation import latest_location_plan
+from app.services.location_validation import location_plan
+from app.services.event_identity import normalized
+from app.services.spatial_quality import AUTO, CONFLICT, MANUAL, REOPENED, REVIEW, coordinate, has_position
+from app.services.venue_registry import lookup_venue, registry_entry
 from app.services.survey_service import STAGE_FILES, append_survey, stage_time, with_dates
 from app.utils.atomic_file import write_text
 
@@ -82,6 +86,10 @@ class PipelineController:
         stamp=stage_time()
         source=records(pd.DataFrame([post]))[0]
         source['data_analise_ia']=stamp
+        source['modelo_extracao'] = self.config.ai_model
+        source['versao_prompt_extracao'] = EXTRACTION_VERSION
+        content = [source.get(field) for field in ('legenda', 'imagens', 'data_publicacao')]
+        source['hash_conteudo_extracao'] = sha256(json.dumps(content, ensure_ascii=False).encode()).hexdigest()
         events=[{**event,'id_coleta':source.get('id_coleta'),
                  'data_scraping':source.get('data_scraping'),
                  'data_analise_ia':stamp,'data_geolocalizacao':None} for event in (found or [])]
@@ -231,66 +239,188 @@ class PipelineController:
 
     def location_stage(self, status=None, progress=None, on_saved=None):
         with PostHistory.transaction(self.history_path) as history:
-            pending, references, conflicts, day = latest_location_plan(history)
-            if status and day:
-                status(f'Validando os locais da extração de {day:%d/%m/%Y} com as fontes disponíveis...')
-            if pending.empty:
-                if status: status(f'Nenhuma consulta HERE a executar. {len(conflicts)} ocorrências em revisão.')
-                self._try_output(self.location_failures_path,
-                                 lambda: self._save_frame(self.location_failures_path, conflicts))
-                self._sync_surveys(history)
-                return history.frames()[2],conflicts
-            if status: status(f'{len(pending)} ocorrências pendentes na extração selecionada. Consultando HERE...')
-            history.prepare_database()
-            saved_indices = set()
-            if not conflicts.empty:
-                self._try_output(self.location_failures_path,
-                                 lambda: self._save_frame(self.location_failures_path, conflicts))
+            queries, references, conflicts = location_plan(history)
+            venues = {venue['id']: venue for venue in history.venue_records()}
+            failures = []
 
-            def persist(index,result,error):
-                refs, links = references[index]
+            def save(refs, result, signature, venue=None):
+                stamp = stage_time()
+                previous = {}
+                for key, index in refs:
+                    entry = history.entries[key]
+                    previous.setdefault(key, (entry['final'].copy(), entry['updated_at']))
+                    prior = entry['final'].get(index, {})
+                    result_fields = {**prior, **result} if result.get('status_localizacao') == CONFLICT else result
+                    entry['final'][index] = {
+                        **entry['events'][int(index)], **result_fields,
+                        'assinatura_localizacao': signature, 'data_geolocalizacao': stamp,
+                        **{field: prior[field] for field in ('historico_localizacao', 'publicar_webgis',
+                                                            'correcao_localizacao') if field in prior},
+                    }
+                    entry['updated_at'] = datetime.now(timezone.utc).isoformat()
+                try:
+                    history.checkpoint_many(previous, venue)
+                except Exception:
+                    for key, (final, updated_at) in previous.items():
+                        history.entries[key].update(final=final, updated_at=updated_at)
+                    raise
+
+            for row in conflicts.to_dict('records'):
+                refs = row.pop('refs')
+                signature = row.pop('signature')
+                save(refs, {'status_localizacao': CONFLICT, 'necessita_revisao': True,
+                            'motivo_revisao': row['erro'], 'fontes_localizacao': row['urls_publicacoes'],
+                            'evidencias_fontes': row['evidencias_fontes']}, signature)
+                failures.append(row)
+
+            saved_indices = set()
+
+            def persist(index, result, error):
+                refs, links, signature = references[index]
                 if result is None:
-                    self._record_failure(self.location_failures_path,
-                                         {'indice_evento': index, 'url_post': pending.loc[index].get('url_post'),
-                                          'urls_publicacoes': links, 'erro': error})
+                    failure = {'indice_evento': index, 'url_post': queries.loc[index].get('url_post'),
+                               'urls_publicacoes': links, 'erro': error}
+                    failures.append(failure)
+                    self._record_failure(self.location_failures_path, failure)
                     return
                 saved = dict(result)
                 saved.pop('_source_index', None)
+                saved.pop('_ignorar_cadastro', None)
                 if len(links) > 1 or len(refs) > 1:
-                    for field in pending.columns:
+                    for field in queries.columns:
                         saved.pop(field, None)
                     saved['fontes_localizacao'] = links
-                stamp = stage_time()
-                for key, event_index in refs:
-                    entry = history.entries[key]
-                    entry['final'][event_index] = {**entry['events'][int(event_index)], **saved,
-                                                   'data_geolocalizacao': stamp}
-                    entry['updated_at'] = datetime.now(timezone.utc).isoformat()
-                history.checkpoint_many(dict.fromkeys(key for key, _ in refs))
+                if not saved.get('status_localizacao'):
+                    saved['status_localizacao'] = REVIEW
+                    saved['necessita_revisao'] = True
+                saved['data_validacao_localizacao'] = stage_time()
+                venue = None
+                if (saved['status_localizacao'] == AUTO and saved.get('precisao_localizacao') == 'poi'
+                        and saved.get('here_id') and not saved.get('local_cadastrado_id')):
+                    previous = next((record for record in venues.values()
+                                     if record['location'].get('here_id') == saved['here_id']), None)
+                    if previous is None:
+                        source = queries.loc[index]
+                        venue = registry_entry(self._registry_location(saved),
+                                               aliases=[source.get('local_informado')],
+                                               parent=source.get('instituicao_local') or '')
+                        saved['local_cadastrado_id'] = venue['id']
+                        venues[venue['id']] = venue
+                save(refs, saved, signature, venue)
                 saved_indices.add(index)
                 if on_saved and index % 20 == 0:
                     on_saved(history.frames()[2])
 
+            remote_indices = []
+            for index, query in queries.iterrows():
+                cached = lookup_venue(query, venues.values(), self.config)
+                if cached:
+                    persist(index, cached, None)
+                else:
+                    remote_indices.append(index)
+
+            if status:
+                status(f'{len(remote_indices)} ocorrências para a HERE; {len(saved_indices)} do cadastro.')
             try:
-                located,failures=geocode_events(pending,self.secrets.here_api_key,self.secrets.openai_api_key,self.config,progress,persist)
-                failed_indices=set(failures.get('indice_evento',[]))
-                for index,row in located.iterrows():
-                    if index in failed_indices or index in saved_indices: continue
-                    saved=records(pd.DataFrame([row]))[0]
-                    persist(index, saved, None)
-                if 'indice_evento' in failures:
-                    failures['urls_publicacoes'] = failures['indice_evento'].map(
-                        {index: links for index, (_, links) in enumerate(references)}
-                    )
-                if not conflicts.empty:
-                    failures = pd.concat([conflicts, failures], ignore_index=True)
-                self._try_output(self.location_failures_path,
-                                 lambda: self._save_frame(self.location_failures_path, failures))
+                if remote_indices:
+                    located, errors = geocode_events(queries.loc[remote_indices], self.secrets.here_api_key,
+                                                     self.secrets.openai_api_key, self.config, progress, persist,
+                                                     lambda event: lookup_venue(event, venues.values(), self.config))
+                    failed_indices = set(errors.get('indice_evento', []))
+                    reported = {row.get('indice_evento') for row in failures}
+                    failures.extend(row for row in records(errors) if row.get('indice_evento') not in reported)
+                    for index, row in located.iterrows():
+                        if index not in failed_indices and index not in saved_indices:
+                            persist(index, records(pd.DataFrame([row]))[0], None)
             finally:
+                self._try_output(self.location_failures_path,
+                                 lambda: self._save_frame(self.location_failures_path, pd.DataFrame(failures)))
                 self._sync_surveys(history)
-            final=history.frames()[2]
-        if status: status(f'Localização concluída: {len(failures)} falhas pendentes.')
-        return final,failures
+            return history.frames()[2], pd.DataFrame(failures)
+
+    @staticmethod
+    def _registry_location(location):
+        fields = ('local_padronizado', 'endereco', 'bairro', 'municipio', 'uf', 'pais', 'latitude', 'longitude',
+                  'here_id', 'precisao_localizacao', 'here_result_type', 'tipo_numero_here', 'acessos_here',
+                  'status_localizacao', 'data_validacao_localizacao', 'necessita_revisao', 'origem_localizacao')
+        return {field: location[field] for field in fields if field in location}
+
+    def registered_venues(self):
+        with PostHistory.transaction(self.history_path) as history:
+            return [venue for venue in history.venue_records() if venue['active']]
+
+    def review_location(self, post_id, event_index, *, action, reason, location=None,
+                        venue_id=None, aliases=(), parent='', register=False):
+        if not reason.strip():
+            raise ValueError('Informe o motivo da revisão.')
+        with PostHistory.transaction(self.history_path) as history:
+            key, index = str(post_id), str(event_index)
+            entry = history.entries[key]
+            event = entry['events'][int(index)]
+            prior = entry['final'].get(index, {})
+            venues = {venue['id']: venue for venue in history.venue_records()}
+            venue = venues.get(venue_id or prior.get('local_cadastrado_id'))
+            stamp = stage_time()
+            change = {'at': stamp, 'action': action, 'reason': reason,
+                      'previous': self._registry_location(prior)}
+            audit = [*prior.get('historico_localizacao', []), change]
+            result = {**event, **prior, 'historico_localizacao': audit,
+                      'data_validacao_localizacao': stamp, 'data_geolocalizacao': stamp}
+            modified_venue = None
+            if action in {'reabrir', 'invalidar_cadastro'}:
+                result.update(status_localizacao=REOPENED, necessita_revisao=True, motivo_revisao=reason)
+                if action == 'invalidar_cadastro':
+                    if not venue or not venue['active']:
+                        raise ValueError('Esta ocorrência não está vinculada a um local ativo.')
+                    modified_venue = {**venue, 'active': False,
+                                      'history': [*venue['history'], {'at': stamp, 'reason': reason}]}
+                    affected = {}
+                    for other_key, other_entry in history.entries.items():
+                        for other in other_entry['final'].values():
+                            if other.get('local_cadastrado_id') == venue['id'] and other.get('status_localizacao') != MANUAL:
+                                other.update(status_localizacao=REOPENED, necessita_revisao=True, motivo_revisao=reason)
+                                affected[other_key] = None
+            elif action == 'corrigir_endereco':
+                if not location or not location.get('endereco_informado', '').strip():
+                    raise ValueError('Informe o endereço corrigido.')
+                result['correcao_localizacao'] = {field: value for field, value in location.items() if value}
+                result['correcao_localizacao'].update(evidencia_endereco=location['endereco_informado'],
+                                                      origem_evidencia_endereco='revisao_manual')
+                result.update(status_localizacao=REOPENED, necessita_revisao=True, motivo_revisao=reason)
+            elif action in {'aprovar', 'vincular'}:
+                if action == 'vincular' and (not venue or not venue['active']):
+                    raise ValueError('Selecione um local ativo no cadastro.')
+                point = venue['location'] if action == 'vincular' else location
+                if not point or not has_position(point):
+                    raise ValueError('Informe latitude e longitude válidas.')
+                result.update({field: None for field in ('here_id', 'here_result_type', 'tipo_numero_here',
+                                                        'acessos_here', 'local_cadastrado_id')})
+                result.update(self._registry_location(point), status_localizacao=MANUAL,
+                              latitude=coordinate(point.get('latitude'), 90),
+                              longitude=coordinate(point.get('longitude'), 180),
+                              necessita_revisao=False, motivo_revisao=None,
+                              data_validacao_localizacao=stamp, origem_localizacao='revisao_manual',
+                              precisao_localizacao=point.get('precisao_localizacao') or 'manual')
+                if action == 'vincular':
+                    result['local_cadastrado_id'] = venue['id']
+                if register and action == 'aprovar':
+                    if not result.get('local_padronizado'):
+                        raise ValueError('Informe o nome do espaço para cadastrá-lo.')
+                    if venue and (not venue['active'] or
+                                  normalized(venue['name']) != normalized(result['local_padronizado']) or
+                                  normalized(venue['location'].get('endereco')) != normalized(result.get('endereco'))):
+                        venue = None
+                    modified_venue = registry_entry(self._registry_location(result), aliases=aliases,
+                                                    parent=parent, previous=venue)
+                    result['local_cadastrado_id'] = modified_venue['id']
+            else:
+                raise ValueError('Ação de revisão desconhecida.')
+            entry['final'][index] = result
+            entry['updated_at'] = datetime.now(timezone.utc).isoformat()
+            keys = list(affected) if action == 'invalidar_cadastro' else []
+            history.checkpoint_many(dict.fromkeys([key, *keys]), modified_venue)
+            self._sync_surveys(history)
+        return self.export_stage()
 
     def export_stage(self, posts=None, extraction_failures=None, location_failures=None, status=None):
         with PostHistory.transaction(self.history_path) as history:

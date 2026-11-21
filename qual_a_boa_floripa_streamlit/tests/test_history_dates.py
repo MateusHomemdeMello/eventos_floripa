@@ -21,7 +21,7 @@ def test_saved_cce_pin_conflict_is_requeued_for_location(tmp_path):
     assert history.pending()[1] == []
 
 
-def test_location_uses_latest_sao_paulo_day_and_combines_sources(tmp_path):
+def test_location_combines_sources_and_recovers_older_pending_records(tmp_path):
     controller = PipelineController(AppConfig(), Secrets('', '', ''), tmp_path)
     history = PostHistory(controller.history_path)
     common = {'evento': 'Mostra de Curtas', 'data_inicio': '2099-01-01', 'horario_inicio': '18:00'}
@@ -34,7 +34,7 @@ def test_location_uses_latest_sao_paulo_day_and_combines_sources(tmp_path):
                                          'data_analise_ia': stamp}])
     history.save()
 
-    def geocode(frame, here, openai, config, progress, persist):
+    def geocode(frame, here, openai, config, progress, persist, resolve_cached=None):
         assert list(frame['local_informado']) == ['CCE da UFSC']
         persist(0, {'local_padronizado': 'CCE da UFSC', 'latitude': -27.6, 'longitude': -48.5}, None)
         return pd.DataFrame(), pd.DataFrame()
@@ -44,8 +44,8 @@ def test_location_uses_latest_sao_paulo_day_and_combines_sources(tmp_path):
         controller.location_stage()
         here.assert_called_once()
     assert failures.empty
-    assert PostHistory(controller.history_path).pending()[1] == [('old', '0')]
-    assert final.loc[final['_post_id'].isin(['a', 'b']), 'fontes_localizacao'].tolist() == [['a', 'b'], ['a', 'b']]
+    assert PostHistory(controller.history_path).pending()[1] == []
+    assert final.loc[final['_post_id'].isin(['a', 'b']), 'fontes_localizacao'].tolist() == [['old', 'a', 'b'], ['old', 'a', 'b']]
 
 
 def test_conflicting_venues_require_review_without_here(tmp_path):
@@ -89,7 +89,7 @@ def test_here_callback_saves_timestamp_and_surveys_without_reanalysis(tmp_path):
                                                'data_inicio':'2099-01-01'}])
     history.save()
 
-    def locate(frame,here,openai,config,progress,on_result):
+    def locate(frame,here,openai,config,progress,on_result,resolve_cached=None):
         result={'latitude':-27.6,'longitude':-48.5,
                 'data_publicacao':pd.Timestamp('2026-09-24T11:00:00-03:00')}
         on_result(0,result,None)

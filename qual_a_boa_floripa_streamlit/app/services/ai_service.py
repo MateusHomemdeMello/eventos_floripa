@@ -140,11 +140,25 @@ EVENTOS_SCHEMA = {
 
 
 import base64, io, json, time
+import re
+from datetime import date, time as clock_time
+from hashlib import sha256
 import pandas as pd
 import requests
 from PIL import Image
 from openai import AuthenticationError, OpenAI, PermissionDeniedError, RateLimitError
-from app.services.event_identity import outside_agenda
+from app.services.event_identity import normalized, outside_agenda
+from app.services.spatial_quality import address_parts, street_identity
+
+LOCATION_SCHEMA_FIELDS = {
+    **{name: {"type": ["string", "null"]} for name in (
+        "evidencia_local", "evidencia_endereco", "origem_evidencia_local",
+        "origem_evidencia_endereco", "municipio_informado", "instituicao_local")},
+    "confianca_local": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+}
+_event_schema = EVENTOS_SCHEMA["schema"]["properties"]["eventos"]["items"]
+_event_schema["properties"].update(LOCATION_SCHEMA_FIELDS)
+_event_schema["required"].extend(LOCATION_SCHEMA_FIELDS)
 
 def image_to_data_url(url: str, config) -> str:
     r=requests.get(url,headers={"User-Agent":"Mozilla/5.0","Referer":"https://www.instagram.com/"},timeout=30)
@@ -175,6 +189,61 @@ ESCOPO: publique apenas atividades culturais, esportivas ou de lazer concretas. 
 IDENTIDADE: use o título próprio da atividade, sem chamadas promocionais, e mantenha informações que distinguem sessões, edições, artistas ou atrações. Preencha responsavel_evento com artista, grupo ou organização efetivamente responsável quando identificado. O perfil que compartilhou o post não é evidência de responsabilidade. Preserve datas e horários de sessões diferentes.
 LOCAL: procure o espaço nos detalhes e na descrição do post e nas imagens. Preserve nomes de unidades, siglas e instituição associada. Por exemplo, registre 'CCE da UFSC' como local, e 'Trindade' como bairro se explicitamente indicado. Um bairro, uma referência próxima ou o endereço da entidade divulgadora não substitui o local.
 """
+EXTRACTION_INSTRUCTIONS += """
+PAPÉIS GEOGRÁFICOS: o perfil que publicou pode apenas divulgar. O responsável organiza ou realiza. O local de realização é o espaço físico onde o público deve comparecer. O endereço precisa estar associado a esse espaço ou à realização nesta data. Separe endereço de contato, sede do organizador, inscrição, pagamento e retirada de ingressos. Não use nenhum desses endereços como local do evento. Em atividade itinerante, registre o ponto de encontro ou saída quando o material indicar que é onde o público deve se apresentar.
+EXEMPLOS: 'UFSC apresenta uma mostra no Teatro Álvaro de Carvalho, Rua Marechal Guilherme, 26' identifica UFSC como responsável, teatro como local e a rua como endereço de realização. 'Secretaria de Cultura apresenta um espetáculo' sem informação adicional deixa local e endereço nulos. 'Palestra no Auditório Garapuvu, Centro de Cultura e Eventos da UFSC' identifica o auditório como local e o centro/UFSC como instituição associada. Use a unidade mais específica explicitamente indicada.
+EVIDÊNCIAS: em evidencia_local e evidencia_endereco transcreva apenas um trecho curto e literal que vincule o respectivo valor à realização. Informe a origem de cada trecho como 'legenda' ou 'imagem N', usando o número apresentado antes da imagem. Preencha municipio_informado e instituicao_local somente se explicitamente relacionados ao local do evento. Se faltar evidência, deixe o campo, o trecho e sua origem nulos. Use confianca_local de 0 a 1 como indicador auxiliar de clareza espacial, independente de confianca_extracao. Use null quando não houver localização identificável.
+"""
+EXTRACTION_VERSION = sha256((EXTRACTION_INSTRUCTIONS + json.dumps(EVENTOS_SCHEMA, sort_keys=True)).encode()).hexdigest()[:16]
+
+
+def validate_event(event, caption, attached):
+    issues = []
+    for fields, parser, size in ((('data_inicio', 'data_fim'), date.fromisoformat, 10),
+                                  (('horario_inicio', 'horario_fim'), clock_time.fromisoformat, 5)):
+        for field in fields:
+            value = event.get(field)
+            if value is not None:
+                try:
+                    if len(value) != size or parser(value).isoformat()[:size] != value:
+                        raise ValueError()
+                except (TypeError, ValueError):
+                    event[field] = None
+                    issues.append(f'{field} inválido')
+    if event.get('data_inicio') and event.get('data_fim') and event['data_fim'] < event['data_inicio']:
+        event['data_fim'] = None
+        issues.append('Período invertido')
+    for field, evidence, origin in (
+        ('local_informado', 'evidencia_local', 'origem_evidencia_local'),
+        ('endereco_informado', 'evidencia_endereco', 'origem_evidencia_endereco'),
+    ):
+        if evidence not in event:  # compatibility with previous structured results
+            continue
+        excerpt = normalized(event.get(evidence))
+        source = normalized(event.get(origin))
+        verified = excerpt and ((source == 'legenda' and f' {excerpt} ' in f' {normalized(caption)} ')
+                                or source in attached)
+        value = event.get(field)
+        if verified and value:
+            if field == 'local_informado':
+                verified = f' {normalized(value)} ' in f' {excerpt} '
+            else:
+                street, number = address_parts(value)
+                name = street_identity(street)
+                verified = bool(name and f' {name} ' in f' {excerpt} '
+                                and (not number or f' {number} ' in f' {excerpt} '))
+        if field == 'endereco_informado' and re.search(
+            r'\b(?:endereco|local) (?:de |para )?(?:inscricoes|contato|retirada|pagamento)\b|'
+            r'\b(?:sede administrativa|inscricoes (?:na|no)|retirada de ingressos)\b', excerpt
+        ):
+            verified = False
+        if not verified:
+            if event.get(field):
+                issues.append(f'{field} sem evidência verificável')
+            event[field] = event[evidence] = event[origin] = None
+    if issues:
+        event['observacoes'] = ' | '.join(filter(None, [event.get('observacoes'), *issues]))
+    return event
 
 
 def interpret_post(client: OpenAI, post, config):
@@ -184,9 +253,13 @@ def interpret_post(client: OpenAI, post, config):
     images = post.get("imagens")
     images = images if isinstance(images, list) else []
     prompt=f"Data da publicação: {published.strftime('%Y-%m-%d')}\nPerfil: @{post.get('perfil') or ''}\nLEGENDA:\n{caption}"
-    content=[{"type":"input_text","text":prompt}]; errors=[]
+    content=[{"type":"input_text","text":prompt}]; errors=[]; attached=set()
     for i,url in enumerate(list(dict.fromkeys(images))[:config.max_images_per_post],1):
-        try: content.append({"type":"input_image","image_url":image_to_data_url(url,config),"detail":"high"})
+        try:
+            image = image_to_data_url(url,config)
+            content.extend([{"type":"input_text","text":f"Imagem {i}:"},
+                            {"type":"input_image","image_url":image,"detail":"high"}])
+            attached.add(f'imagem {i}')
         except Exception as exc: errors.append(f"imagem {i}: {type(exc).__name__}")
     if errors and len(content) == 1 and not caption.strip():
         raise RuntimeError('Imagens indisponíveis e post sem legenda. Análise pendente.')
@@ -198,7 +271,8 @@ def interpret_post(client: OpenAI, post, config):
         raise ValueError('O GPT retornou uma lista de eventos inválida.')
     if not found and errors:
         raise RuntimeError('A análise não encontrou eventos e há imagens indisponíveis. Post pendente para nova tentativa.')
-    return [event for event in found if not outside_agenda(event.get('evento'))], "; ".join(errors)
+    return [validate_event(event, caption, attached) for event in found
+            if not outside_agenda(event.get('evento'))], "; ".join(errors)
 
 def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None, on_result=None):
     client=OpenAI(api_key=api_key, timeout=90.0); events=[]; failures=[]; total=max(len(posts),1)
@@ -223,4 +297,4 @@ def extract_events(api_key: str, posts: pd.DataFrame, config, progress=None, on_
         if progress: progress(n/total, f"Interpretando posts: {n}/{len(posts)}")
         time.sleep(config.ai_interval_seconds)
     cols=["evento","responsavel_evento","categoria","data_inicio","data_fim","horario_inicio","horario_fim","local_informado","endereco_informado","bairro_informado","referencia_local","descricao","confianca_extracao","observacoes","perfil","data_publicacao","url_post","shortcode","foto_url","erros_imagem"]
-    return pd.DataFrame(events,columns=cols), pd.DataFrame(failures)
+    return pd.DataFrame(events,columns=[*cols, *LOCATION_SCHEMA_FIELDS]), pd.DataFrame(failures)

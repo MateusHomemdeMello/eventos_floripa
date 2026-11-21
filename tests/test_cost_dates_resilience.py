@@ -21,7 +21,7 @@ def test_static_prefix_and_duplicate_images(monkeypatch):
     calls = client.responses.create.call_args_list
     assert calls[0].kwargs['input'][0] == calls[1].kwargs['input'][0]
     assert calls[0].kwargs['input'][1] != calls[1].kwargs['input'][1]
-    assert len(calls[0].kwargs['input'][1]['content']) == 2
+    assert len(calls[0].kwargs['input'][1]['content']) == 3
     assert download.call_count == 2
 
 
@@ -74,7 +74,7 @@ def test_here_keeps_candidate_when_web_fails(monkeypatch):
     monkeypatch.setattr(geo, 'buscar_candidatos_here', lambda _: [candidate])
     monkeypatch.setattr(geo, 'selecionar_melhor_candidato', lambda _: candidate.copy())
     monkeypatch.setattr(geo, 'pesquisar_local_na_web', Mock(side_effect=RuntimeError('offline')))
-    assert geo.localizar_evento({})['latitude'] == -27.6
+    assert geo.localizar_evento({'local_informado': 'Teatro'})['latitude'] == -27.6
 
 
 def test_here_does_not_require_openai_without_fallback(monkeypatch):
@@ -94,9 +94,9 @@ def test_here_requires_cce_evidence_even_with_perfect_geographic_score(monkeypat
         queries.append(query)
         address = {'city': 'Florianópolis', 'district': 'Trindade'}
         return [
-            {'id': 'bank', 'title': 'Caixa Econômica Federal', 'position': {'lat': -27.59, 'lng': -48.54},
+            {'id': 'bank', 'resultType': 'place', 'title': 'Caixa Econômica Federal', 'position': {'lat': -27.59, 'lng': -48.54},
              'address': address, 'scoring': {'queryScore': 1}},
-            {'id': 'cce', 'title': 'Centro de Comunicação e Expressão', 'position': {'lat': -27.60, 'lng': -48.52},
+            {'id': 'cce', 'resultType': 'place', 'title': 'Centro de Comunicação e Expressão', 'position': {'lat': -27.60, 'lng': -48.52},
              'address': address, 'scoring': {'queryScore': 0.8}},
         ]
 

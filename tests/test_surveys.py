@@ -61,7 +61,7 @@ def test_cumulative_surveys_preserve_dates_without_duplicate_cached_results(cont
 
 
 def test_partial_location_persists_and_retry_only_appends_new_result(controller):
-    def partial(frame,key,openai,config,progress,on_result):
+    def partial(frame,key,openai,config,progress,on_result,resolve_cached=None):
         on_result(0,{'latitude':-27.6,'longitude':-48.5},None)
         raise RuntimeError('interrupted')
     with patch('app.controllers.pipeline_controller.collect_posts',return_value=collection('A','B')), patch('app.controllers.pipeline_controller.extract_events',side_effect=extract), patch('app.controllers.pipeline_controller.geocode_events',side_effect=partial) as here:

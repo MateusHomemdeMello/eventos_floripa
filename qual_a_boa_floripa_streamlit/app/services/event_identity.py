@@ -50,6 +50,14 @@ def _venue_name(value):
     return name if name not in {'local nao informado', 'local a confirmar', 'a definir', 'online'} else ''
 
 
+GENERIC_TITLE_TERMS = {'de', 'do', 'da', 'das', 'dos', 'em', 'e', 'com', 'o', 'a', 'show', 'oficina',
+                       'evento', 'mostra', 'exposicao', 'apresentacao', 'feira', 'palestra', 'sessao'}
+
+
+def distinctive_title(title):
+    return set(title.split()) - GENERIC_TITLE_TERMS
+
+
 def same_occurrence(a, b):
     if (a['data_inicio'], a['data_fim']) != (b['data_inicio'], b['data_fim']):
         return False
@@ -75,12 +83,11 @@ def same_occurrence(a, b):
     first, second = left['title'], right['title']
     same_organizer = left['organizer'] and left['organizer'] == right['organizer']
     same_time = a['hora_inicio'] and a['hora_inicio'] == b['hora_inicio']
-    meaningful = {'de', 'do', 'da', 'das', 'dos', 'em', 'e', 'com', 'o', 'a', 'show', 'oficina', 'evento'}
     if first and first == second:
-        return bool(same_organizer or same_time or set(first.split()) - meaningful)
+        return bool(distinctive_title(first) or (same_organizer and same_time))
     if not same_organizer or not (first and second):
         return False
-    first_words, second_words = set(first.split()) - meaningful, set(second.split()) - meaningful
+    first_words, second_words = distinctive_title(first), distinctive_title(second)
     return bool(len(first_words & second_words) >= 2 and
                 re.findall(r'\b\d+\b', first) == re.findall(r'\b\d+\b', second) and
                 SequenceMatcher(None, first, second).ratio() >= 0.90)
@@ -96,6 +103,7 @@ def publication_identity(row, local, address, district, here_id):
         'address': normalized(address),
         'district': normalized(district),
     }
+
 
 
 def group_occurrences(events, *, by_analysis_day=False, matches=same_occurrence):

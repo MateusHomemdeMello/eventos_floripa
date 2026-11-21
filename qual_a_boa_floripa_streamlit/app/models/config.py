@@ -14,6 +14,7 @@ class AppConfig:
     reference_city: str = "Florianópolis"
     reference_state: str = "Santa Catarina"
     reference_country: str = "Brasil"
+    allowed_municipalities: list[str] = field(default_factory=lambda: ["São José", "Palhoça", "Biguaçu"])
     country_code: str = "BRA"
     reference_lat: float = -27.5949
     reference_lon: float = -48.5482

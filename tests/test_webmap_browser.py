@@ -29,7 +29,7 @@ def test_acceptance_scenarios(tmp_path, mobile):
                      'data_inicio': weekend.isoformat(), 'data_fim': weekend.isoformat(),
                      'descricao': 'Texto do evento. ' * 90, 'horario_inicio': '19:00', 'local_informado': 'Local ' + venue,
                      'endereco_informado': 'Rua ' + venue + ', 10', 'bairro_informado': 'Trindade',
-                     'latitude': -27.59 + (ord(venue) - 65) * .0002, 'longitude': -48.54,
+                     'status_localizacao': 'validado_automaticamente', 'latitude': -27.59 + (ord(venue) - 65) * .0002, 'longitude': -48.54,
                      'foto_url': 'https://invalid.example/missing.jpg'})
     rows[-1]['url_post'] = 'https://www.instagram.com/p/source-a/'
     rows.append({**rows[-1], 'id': 8, 'url_post': 'https://www.instagram.com/p/source-b/'})
